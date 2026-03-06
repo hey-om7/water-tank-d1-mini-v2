@@ -1,617 +1,1441 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>Water Tank Monitor</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{
---bg:#0a0e1a;--surface:#111827;--surface2:#1a2236;--card:#1e2a3a;
---border:#2a3a5c;--text:#e2e8f0;--text2:#94a3b8;--text3:#64748b;
---blue:#3b82f6;--cyan:#06b6d4;--green:#10b981;--yellow:#f59e0b;
---red:#ef4444;--purple:#8b5cf6;
---glow:0 0 30px rgba(6,182,212,0.15);
-}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-.container{max-width:1200px;margin:0 auto;padding:16px}
-header{text-align:center;padding:24px 0 16px;position:relative}
-header h1{font-size:1.6rem;font-weight:700;background:linear-gradient(135deg,var(--cyan),var(--blue),var(--purple));-webkit-background-clip:text;-webkit-text-fill-color:transparent;letter-spacing:-0.5px}
-header p{color:var(--text3);font-size:.8rem;margin-top:4px}
-.status-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;animation:pulse 2s infinite}
-.status-dot.online{background:var(--green);box-shadow:0 0 8px var(--green)}
-.status-dot.offline{background:var(--red);box-shadow:0 0 8px var(--red)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Water Tank Monitor</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
 
-/* Cards */
-.card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:20px;backdrop-filter:blur(10px);transition:transform .2s,box-shadow .2s}
-.card:hover{box-shadow:var(--glow)}
-.card-title{font-size:.75rem;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;display:flex;align-items:center;gap:6px}
-.card-title svg{width:14px;height:14px}
-
-/* Grid */
-.grid{display:grid;gap:16px;margin-bottom:16px}
-.grid-main{grid-template-columns:1fr 1fr}
-.grid-stats{grid-template-columns:repeat(4,1fr)}
-.grid-charts{grid-template-columns:1fr 1fr}
-
-/* Tank Visualization */
-.tank-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:340px}
-.tank-svg{width:200px;height:280px;filter:drop-shadow(0 0 20px rgba(6,182,212,0.1))}
-.tank-body{fill:none;stroke:var(--border);stroke-width:2;rx:12}
-.tank-water{transition:all 1s cubic-bezier(.4,0,.2,1)}
-.tank-pct{font-size:3rem;font-weight:800;text-anchor:middle;fill:var(--text)}
-.tank-pct-sign{font-size:1.2rem;fill:var(--text2)}
-
-/* Wave Animation */
-.wave{animation:wave 3s ease-in-out infinite}
-.wave2{animation:wave2 4s ease-in-out infinite}
-@keyframes wave{0%,100%{d:path("M0,8 Q25,0 50,8 T100,8 L100,20 L0,20 Z")}50%{d:path("M0,8 Q25,16 50,8 T100,8 L100,20 L0,20 Z")}}
-@keyframes wave2{0%,100%{d:path("M0,10 Q25,16 50,10 T100,10 L100,20 L0,20 Z")}50%{d:path("M0,10 Q25,4 50,10 T100,10 L100,20 L0,20 Z")}}
-
-/* Percentage Display */
-.pct-display{text-align:center;margin-top:16px}
-.pct-value{font-size:3.5rem;font-weight:800;line-height:1;background:linear-gradient(135deg,var(--cyan),var(--blue));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.pct-label{font-size:.8rem;color:var(--text3);margin-top:4px}
-
-/* Fill Indicator */
-.fill-indicator{background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(6,182,212,.1));border:1px solid rgba(16,185,129,.3);border-radius:12px;padding:16px;text-align:center;display:none}
-.fill-indicator.active{display:block;animation:fillPulse 2s infinite}
-@keyframes fillPulse{0%,100%{border-color:rgba(16,185,129,.3)}50%{border-color:rgba(16,185,129,.6)}}
-.fill-icon{font-size:2rem;margin-bottom:8px}
-.fill-rate{font-size:1.4rem;font-weight:700;color:var(--green)}
-.fill-eta{font-size:.9rem;color:var(--cyan);margin-top:4px}
-.fill-label{font-size:.7rem;color:var(--text3);margin-top:2px}
-
-/* Filling animation */
-.filling-waves{position:relative;height:40px;overflow:hidden;border-radius:8px;margin-top:8px;background:rgba(6,182,212,.05)}
-.filling-wave-bar{position:absolute;bottom:0;width:200%;height:100%;background:linear-gradient(90deg,transparent,rgba(6,182,212,.15),rgba(16,185,129,.15),transparent);animation:flowWave 2s linear infinite}
-@keyframes flowWave{0%{transform:translateX(-50%)}100%{transform:translateX(0)}}
-.fill-drops{position:absolute;top:0;left:0;width:100%;height:100%}
-.fill-drop{position:absolute;width:4px;height:8px;background:var(--cyan);border-radius:0 0 50% 50%;opacity:.6;animation:dropFall 1.5s linear infinite}
-.fill-drop:nth-child(1){left:15%;animation-delay:0s}
-.fill-drop:nth-child(2){left:35%;animation-delay:.3s}
-.fill-drop:nth-child(3){left:55%;animation-delay:.7s}
-.fill-drop:nth-child(4){left:75%;animation-delay:.4s}
-.fill-drop:nth-child(5){left:90%;animation-delay:1s}
-@keyframes dropFall{0%{top:-10px;opacity:.8}100%{top:100%;opacity:0}}
-
-/* Stat Cards */
-.stat-value{font-size:1.5rem;font-weight:700;color:var(--text)}
-.stat-unit{font-size:.75rem;color:var(--text3);margin-left:2px}
-.stat-info{font-size:.7rem;color:var(--text3);margin-top:4px}
-
-/* Charts */
-.chart-container{position:relative;height:220px}
-
-/* Config Panel */
-.config-toggle{background:var(--surface2);border:1px solid var(--border);color:var(--text);padding:10px 20px;border-radius:10px;cursor:pointer;font-family:'Inter',sans-serif;font-size:.85rem;font-weight:500;display:flex;align-items:center;gap:8px;margin:16px auto;transition:all .2s}
-.config-toggle:hover{border-color:var(--blue);background:var(--card)}
-.config-panel{display:none;animation:slideDown .3s ease}
-.config-panel.open{display:block}
-@keyframes slideDown{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:translateY(0)}}
-
-.form-group{margin-bottom:16px}
-.form-group label{display:block;font-size:.75rem;font-weight:600;color:var(--text2);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
-.form-group input{width:100%;padding:10px 14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;color:var(--text);font-family:'Inter',sans-serif;font-size:.9rem;transition:border-color .2s}
-.form-group input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
-.form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-
-.btn{padding:10px 20px;border:none;border-radius:8px;font-family:'Inter',sans-serif;font-size:.85rem;font-weight:600;cursor:pointer;transition:all .2s}
-.btn-primary{background:linear-gradient(135deg,var(--blue),var(--cyan));color:#fff}
-.btn-primary:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(59,130,246,.3)}
-.btn-danger{background:linear-gradient(135deg,var(--red),#dc2626);color:#fff}
-.btn-danger:hover{transform:translateY(-1px);box-shadow:0 4px 15px rgba(239,68,68,.3)}
-.btn-group{display:flex;gap:10px;margin-top:20px}
-
-/* Modal */
-.modal-overlay{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
-.modal-overlay.open{display:flex}
-.modal{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;max-width:400px;width:90%;text-align:center}
-.modal h3{font-size:1.1rem;margin-bottom:8px}
-.modal p{color:var(--text2);font-size:.85rem;margin-bottom:20px}
-
-/* Toast */
-.toast{position:fixed;bottom:20px;right:20px;padding:12px 20px;border-radius:10px;font-size:.85rem;font-weight:500;z-index:200;transform:translateY(100px);opacity:0;transition:all .3s}
-.toast.show{transform:translateY(0);opacity:1}
-.toast.success{background:var(--green);color:#fff}
-.toast.error{background:var(--red);color:#fff}
-
-/* Last Filled */
-.last-filled{text-align:center;padding:12px}
-.last-filled-time{font-size:1.1rem;font-weight:600;color:var(--cyan)}
-.last-filled-ago{font-size:.75rem;color:var(--text3);margin-top:2px}
-
-/* Responsive */
-@media(max-width:768px){
-.grid-main,.grid-charts{grid-template-columns:1fr}
-.grid-stats{grid-template-columns:1fr 1fr}
-.tank-svg{width:160px;height:230px}
-.pct-value{font-size:2.8rem}
-.container{padding:12px}
-header h1{font-size:1.3rem}
-}
-@media(max-width:400px){
-.grid-stats{grid-template-columns:1fr}
-.form-row{grid-template-columns:1fr}
-}
-
-/* Scrollbar */
-::-webkit-scrollbar{width:6px}
-::-webkit-scrollbar-track{background:var(--bg)}
-::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
-::-webkit-scrollbar-thumb:hover{background:var(--text3)}
-
-/* Tab navigation for charts */
-.chart-tabs{display:flex;gap:4px;margin-bottom:12px}
-.chart-tab{padding:6px 14px;border-radius:6px;font-size:.75rem;font-weight:500;cursor:pointer;background:var(--surface);color:var(--text3);border:1px solid transparent;transition:all .2s}
-.chart-tab.active{background:var(--blue);color:#fff;border-color:var(--blue)}
-.chart-tab:hover:not(.active){border-color:var(--border);color:var(--text2)}
-</style>
-</head>
-<body>
-<div class="container">
-  <header>
-    <h1>💧 Water Tank Monitor</h1>
-    <p><span class="status-dot online" id="statusDot"></span><span id="statusText">Connected</span> · <span id="deviceName">WaterTank</span></p>
-  </header>
-
-  <!-- Main Grid: Tank + Info -->
-  <div class="grid grid-main">
-    <div class="card">
-      <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg>Tank Level</div>
-      <div class="tank-wrap">
-        <svg class="tank-svg" viewBox="0 0 120 200" id="tankSvg">
-          <defs>
-            <linearGradient id="waterGrad" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" id="gradStop1" stop-color="rgba(6,182,212,0.8)"/>
-              <stop offset="100%" id="gradStop2" stop-color="rgba(59,130,246,0.6)"/>
-            </linearGradient>
-            <clipPath id="tankClip"><rect x="8" y="8" width="104" height="184" rx="10"/></clipPath>
-          </defs>
-          <!-- Tank body -->
-          <rect x="8" y="8" width="104" height="184" rx="12" class="tank-body"/>
-          <!-- Water fill -->
-          <g clip-path="url(#tankClip)">
-            <rect id="waterRect" x="8" y="192" width="104" height="0" fill="url(#waterGrad)"/>
-            <!-- Waves -->
-            <svg id="waveGroup" y="192" x="8" width="104" height="20" viewBox="0 0 100 20" preserveAspectRatio="none">
-              <path class="wave" d="M0,8 Q25,0 50,8 T100,8 L100,20 L0,20 Z" fill="rgba(6,182,212,0.4)"/>
-              <path class="wave2" d="M0,10 Q25,16 50,10 T100,10 L100,20 L0,20 Z" fill="rgba(59,130,246,0.3)"/>
-            </svg>
-          </g>
-          <!-- Percentage text -->
-          <text x="60" y="105" class="tank-pct" id="tankPctText">--</text>
-          <text x="60" y="125" class="tank-pct-sign">%</text>
-          <!-- Level markers -->
-          <line x1="4" y1="54" x2="8" y2="54" stroke="var(--text3)" stroke-width="1" opacity=".5"/>
-          <line x1="4" y1="100" x2="8" y2="100" stroke="var(--text3)" stroke-width="1" opacity=".5"/>
-          <line x1="4" y1="146" x2="8" y2="146" stroke="var(--text3)" stroke-width="1" opacity=".5"/>
-        </svg>
-        <div class="pct-display">
-          <div class="pct-value" id="pctValue">--</div>
-          <div class="pct-label">Water Level</div>
-        </div>
-      </div>
-    </div>
-
-    <div style="display:flex;flex-direction:column;gap:16px">
-      <!-- Fill Indicator -->
-      <div class="card fill-indicator" id="fillIndicator">
-        <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/></svg>Tank Filling</div>
-        <div class="fill-icon">🌊</div>
-        <div class="fill-rate" id="fillRate">+0.0%/min</div>
-        <div class="fill-label">Fill Rate</div>
-        <div class="fill-eta" id="fillEta">ETA: Calculating...</div>
-        <div class="filling-waves">
-          <div class="filling-wave-bar"></div>
-          <div class="fill-drops">
-            <div class="fill-drop"></div>
-            <div class="fill-drop"></div>
-            <div class="fill-drop"></div>
-            <div class="fill-drop"></div>
-            <div class="fill-drop"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Stats -->
-      <div class="card">
-        <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg>Readings</div>
-        <div class="grid grid-stats" style="margin:0">
-          <div>
-            <div class="stat-value" id="distVal">--<span class="stat-unit">cm</span></div>
-            <div class="stat-info">Distance</div>
-          </div>
-          <div>
-            <div class="stat-value" id="levelVal">--<span class="stat-unit">%</span></div>
-            <div class="stat-info">Level</div>
-          </div>
-          <div>
-            <div class="stat-value" id="uptimeVal">--</div>
-            <div class="stat-info">Uptime</div>
-          </div>
-          <div>
-            <div class="stat-value" id="rssiVal">--<span class="stat-unit">dBm</span></div>
-            <div class="stat-info">WiFi Signal</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Last Filled -->
-      <div class="card">
-        <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Last Full</div>
-        <div class="last-filled">
-          <div class="last-filled-time" id="lastFilledTime">Never</div>
-          <div class="last-filled-ago" id="lastFilledAgo"></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Charts -->
-  <div class="card" style="margin-bottom:16px">
-    <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>Water Level History</div>
-    <div class="chart-tabs">
-      <div class="chart-tab active" data-chart="daily">24 Hours</div>
-      <div class="chart-tab" data-chart="refill">Last Refill</div>
-    </div>
-    <div class="chart-container">
-      <canvas id="historyChart"></canvas>
-    </div>
-  </div>
-
-  <!-- Config Toggle -->
-  <button class="config-toggle" onclick="toggleConfig()">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    Configuration
-  </button>
-
-  <!-- Configuration Panel -->
-  <div class="config-panel" id="configPanel">
-    <div class="card">
-      <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>WiFi Settings</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>SSID</label>
-          <input type="text" id="cfgSsid" placeholder="WiFi Network Name">
-        </div>
-        <div class="form-group">
-          <label>Password</label>
-          <input type="password" id="cfgPass" placeholder="WiFi Password">
-        </div>
-      </div>
-    </div>
-
-    <div class="card" style="margin-top:12px">
-      <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3v4M8 3v4"/></svg>Tank Calibration</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Tank Empty Distance (cm)</label>
-          <input type="number" id="cfgTankMin" placeholder="e.g., 200">
-        </div>
-        <div class="form-group">
-          <label>Tank Full Distance (cm)</label>
-          <input type="number" id="cfgTankMax" placeholder="e.g., 20">
-        </div>
-      </div>
-      <p style="font-size:.7rem;color:var(--text3);margin-top:-8px">Empty = sensor-to-water distance when empty · Full = distance when full</p>
-    </div>
-
-    <div class="card" style="margin-top:12px">
-      <div class="card-title"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>Google Sheets</div>
-      <div class="form-group">
-        <label>Webhook URL</label>
-        <input type="url" id="cfgWebhook" placeholder="https://script.google.com/macros/s/...">
-      </div>
-    </div>
-
-    <div class="btn-group">
-      <button class="btn btn-primary" onclick="saveConfig()">Save Settings</button>
-      <button class="btn btn-danger" onclick="showResetModal()">Factory Reset</button>
-    </div>
-  </div>
-
-  <footer style="text-align:center;padding:24px 0 12px;color:var(--text3);font-size:.7rem">
-    Water Tank Monitor v1.0 · ESP8266
-  </footer>
-</div>
-
-<!-- Reset Modal -->
-<div class="modal-overlay" id="resetModal">
-  <div class="modal">
-    <h3>⚠️ Factory Reset</h3>
-    <p>This will erase all settings including WiFi credentials, tank calibration, and preferences. The device will restart in setup mode.</p>
-    <div class="btn-group" style="justify-content:center">
-      <button class="btn btn-danger" onclick="doReset()">Yes, Reset</button>
-      <button class="btn" style="background:var(--surface);color:var(--text)" onclick="hideResetModal()">Cancel</button>
-    </div>
-  </div>
-</div>
-
-<!-- Toast -->
-<div class="toast" id="toast"></div>
-
-<script>
-// State
-let chart = null;
-let history = [];
-let currentTab = 'daily';
-let lastStatus = {};
-
-// Init
-document.addEventListener('DOMContentLoaded', () => {
-  initChart();
-  fetchStatus();
-  fetchHistory();
-  fetchConfig();
-  setInterval(fetchStatus, 3000);
-  setInterval(fetchHistory, 60000);
-
-  document.querySelectorAll('.chart-tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      document.querySelectorAll('.chart-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      currentTab = tab.dataset.chart;
-      updateChart();
-    });
-  });
-});
-
-// Fetch status
-async function fetchStatus() {
-  try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
-    lastStatus = d;
-    updateDashboard(d);
-    setOnline(true);
-  } catch(e) {
-    setOnline(false);
-  }
-}
-
-function setOnline(on) {
-  const dot = document.getElementById('statusDot');
-  const txt = document.getElementById('statusText');
-  dot.className = 'status-dot ' + (on ? 'online' : 'offline');
-  txt.textContent = on ? 'Connected' : 'Offline';
-}
-
-function updateDashboard(d) {
-  const pct = Math.round(d.level || 0);
-  // Update percentage
-  document.getElementById('pctValue').textContent = pct;
-  document.getElementById('tankPctText').textContent = pct;
-
-  // Update tank water level
-  const maxH = 184;
-  const waterH = (pct / 100) * maxH;
-  const waterY = 192 - waterH;
-  document.getElementById('waterRect').setAttribute('y', waterY);
-  document.getElementById('waterRect').setAttribute('height', waterH);
-  document.getElementById('waveGroup').setAttribute('y', waterY - 10);
-
-  // Update gradient colors based on level
-  const g1 = document.getElementById('gradStop1');
-  const g2 = document.getElementById('gradStop2');
-  if (pct < 20) {
-    g1.setAttribute('stop-color', 'rgba(239,68,68,0.8)');
-    g2.setAttribute('stop-color', 'rgba(239,68,68,0.5)');
-  } else if (pct < 50) {
-    g1.setAttribute('stop-color', 'rgba(245,158,11,0.8)');
-    g2.setAttribute('stop-color', 'rgba(249,115,22,0.5)');
-  } else {
-    g1.setAttribute('stop-color', 'rgba(6,182,212,0.8)');
-    g2.setAttribute('stop-color', 'rgba(59,130,246,0.6)');
-  }
-
-  // Stats
-  document.getElementById('distVal').innerHTML = (d.distance || 0).toFixed(1) + '<span class="stat-unit">cm</span>';
-  document.getElementById('levelVal').innerHTML = pct + '<span class="stat-unit">%</span>';
-  document.getElementById('uptimeVal').textContent = formatUptime(d.uptime || 0);
-  document.getElementById('rssiVal').innerHTML = (d.rssi || 0) + '<span class="stat-unit">dBm</span>';
-
-  // Fill indicator
-  const fi = document.getElementById('fillIndicator');
-  if (d.filling) {
-    fi.classList.add('active');
-    fi.style.display = 'block';
-    document.getElementById('fillRate').textContent = '+' + (d.fillRate || 0).toFixed(2) + '%/min';
-    if (d.eta > 0) {
-      document.getElementById('fillEta').textContent = 'ETA: ' + formatEta(d.eta);
-    } else {
-      document.getElementById('fillEta').textContent = 'ETA: Calculating...';
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
     }
-  } else {
-    fi.classList.remove('active');
-    fi.style.display = 'none';
-  }
 
-  // Device name
-  if (d.name) document.getElementById('deviceName').textContent = d.name;
-}
+    :root {
+      --bg: #06080f;
+      --bg2: #0c1020;
+      --surface: #111830;
+      --surface2: #182040;
+      --card: #141c35;
+      --card2: #1a2445;
+      --border: rgba(100, 140, 255, .12);
+      --text: #e8ecf4;
+      --text2: #8892b0;
+      --text3: #5a6480;
+      --blue: #4f8fff;
+      --cyan: #00d4ff;
+      --green: #00e887;
+      --yellow: #ffbe2e;
+      --red: #ff4757;
+      --purple: #a855f7;
+      --pink: #ec4899;
+      --water1: rgba(0, 180, 255, .55);
+      --water2: rgba(0, 100, 220, .4);
+      --glow-blue: 0 0 40px rgba(79, 143, 255, .15);
+      --glow-cyan: 0 0 30px rgba(0, 212, 255, .1);
+    }
 
-function formatUptime(sec) {
-  if (sec < 60) return sec + 's';
-  if (sec < 3600) return Math.floor(sec/60) + 'm';
-  if (sec < 86400) return Math.floor(sec/3600) + 'h ' + Math.floor((sec%3600)/60) + 'm';
-  return Math.floor(sec/86400) + 'd ' + Math.floor((sec%86400)/3600) + 'h';
-}
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden
+    }
 
-function formatEta(min) {
-  if (min < 1) return '< 1 min';
-  if (min < 60) return Math.round(min) + ' min';
-  return Math.floor(min/60) + 'h ' + Math.round(min%60) + 'm';
-}
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: radial-gradient(ellipse at 50% 0%, rgba(79, 143, 255, .06) 0%, transparent 60%), radial-gradient(ellipse at 80% 100%, rgba(0, 212, 255, .04) 0%, transparent 50%);
+      pointer-events: none;
+      z-index: 0
+    }
 
-// History & Charts
-async function fetchHistory() {
-  try {
-    const r = await fetch('/api/history');
-    const d = await r.json();
-    history = d.data || [];
-    updateChart();
-    updateLastFilled();
-  } catch(e) {}
-}
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 14px;
+      position: relative;
+      z-index: 1
+    }
 
-function initChart() {
-  const ctx = document.getElementById('historyChart').getContext('2d');
-  chart = new Chart(ctx, {
-    type: 'line',
-    data: { labels: [], datasets: [{
-      label: 'Water Level %',
-      data: [],
-      borderColor: '#06b6d4',
-      backgroundColor: 'rgba(6,182,212,0.1)',
-      fill: true,
-      tension: 0.4,
-      pointRadius: 0,
-      pointHitRadius: 10,
-      borderWidth: 2
-    }]},
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { intersect: false, mode: 'index' },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1e2a3a',
-          titleColor: '#e2e8f0',
-          bodyColor: '#94a3b8',
-          borderColor: '#2a3a5c',
-          borderWidth: 1,
-          cornerRadius: 8,
-          padding: 10,
-          callbacks: {
-            label: ctx => ctx.parsed.y.toFixed(1) + '%'
-          }
-        }
-      },
-      scales: {
-        x: {
-          grid: { color: 'rgba(42,58,92,0.3)' },
-          ticks: { color: '#64748b', font: { size: 10 }, maxTicksLimit: 8 }
-        },
-        y: {
-          min: 0, max: 100,
-          grid: { color: 'rgba(42,58,92,0.3)' },
-          ticks: { color: '#64748b', font: { size: 10 }, callback: v => v + '%' }
-        }
+    /* Header */
+    header {
+      text-align: center;
+      padding: 20px 0 18px
+    }
+
+    .logo {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px
+    }
+
+    .logo-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 4px 20px rgba(0, 180, 255, .25)
+    }
+
+    header h1 {
+      font-size: 1.45rem;
+      font-weight: 800;
+      letter-spacing: -.5px;
+      background: linear-gradient(135deg, #fff, var(--cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent
+    }
+
+    .hdr-status {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      font-size: .72rem;
+      color: var(--text3);
+      margin-top: 3px
+    }
+
+    .dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0
+    }
+
+    .dot.on {
+      background: var(--green);
+      box-shadow: 0 0 8px var(--green);
+      animation: blink 2s infinite
+    }
+
+    .dot.off {
+      background: var(--red);
+      box-shadow: 0 0 8px var(--red)
+    }
+
+    @keyframes blink {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .4
       }
     }
-  });
-}
 
-function updateChart() {
-  if (!chart || !history.length) return;
-  let filtered = history;
-  if (currentTab === 'refill') {
-    const refillIdx = findLastRefillStart();
-    if (refillIdx >= 0) filtered = history.slice(refillIdx);
-  }
-  chart.data.labels = filtered.map(h => {
-    const d = new Date(h.t * 1000);
-    return d.getHours().toString().padStart(2,'0') + ':' + d.getMinutes().toString().padStart(2,'0');
-  });
-  chart.data.datasets[0].data = filtered.map(h => h.l);
-  chart.update('none');
-}
-
-function findLastRefillStart() {
-  // Find where water level started rising significantly
-  for (let i = history.length - 1; i > 0; i--) {
-    if (history[i].l - history[i-1].l > 3) {
-      // Walk backward to find start of this rise
-      let start = i - 1;
-      while (start > 0 && history[start].l - history[start-1].l > 0.5) start--;
-      return Math.max(0, start);
+    /* Cards */
+    .card {
+      background: linear-gradient(160deg, var(--card), var(--card2));
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      transition: box-shadow .3s
     }
-  }
-  return 0;
-}
 
-function updateLastFilled() {
-  // Find last time level was >= 95%
-  let lastFull = null;
-  for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].l >= 95) {
-      lastFull = new Date(history[i].t * 1000);
-      break;
+    .card:hover {
+      box-shadow: var(--glow-blue)
     }
-  }
-  const el = document.getElementById('lastFilledTime');
-  const ago = document.getElementById('lastFilledAgo');
-  if (lastFull) {
-    el.textContent = lastFull.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
-    const mins = Math.floor((Date.now() - lastFull.getTime()) / 60000);
-    if (mins < 60) ago.textContent = mins + ' minutes ago';
-    else if (mins < 1440) ago.textContent = Math.floor(mins/60) + ' hours ago';
-    else ago.textContent = Math.floor(mins/1440) + ' days ago';
-  } else {
-    el.textContent = 'No data';
-    ago.textContent = '';
-  }
-}
 
-// Config
-async function fetchConfig() {
-  try {
-    const r = await fetch('/api/config');
-    const d = await r.json();
-    document.getElementById('cfgSsid').value = d.ssid || '';
-    document.getElementById('cfgTankMin').value = d.tankMin || '';
-    document.getElementById('cfgTankMax').value = d.tankMax || '';
-    document.getElementById('cfgWebhook').value = d.webhook || '';
-  } catch(e) {}
-}
+    .card-hdr {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-bottom: 14px;
+      font-size: .68rem;
+      font-weight: 700;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: 1.2px
+    }
 
-function toggleConfig() {
-  document.getElementById('configPanel').classList.toggle('open');
-}
+    .card-hdr i {
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      font-style: normal
+    }
 
-async function saveConfig() {
-  const body = {
-    ssid: document.getElementById('cfgSsid').value,
-    pass: document.getElementById('cfgPass').value,
-    tankMin: parseInt(document.getElementById('cfgTankMin').value) || 200,
-    tankMax: parseInt(document.getElementById('cfgTankMax').value) || 20,
-    webhook: document.getElementById('cfgWebhook').value
-  };
-  try {
-    const r = await fetch('/api/config', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-    const d = await r.json();
-    if (d.ok) showToast('Settings saved!', 'success');
-    else showToast('Error saving settings', 'error');
-  } catch(e) {
-    showToast('Connection error', 'error');
-  }
-}
+    /* Layout */
+    .row {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 14px
+    }
 
-function showResetModal() { document.getElementById('resetModal').classList.add('open'); }
-function hideResetModal() { document.getElementById('resetModal').classList.remove('open'); }
+    .row-hero {
+      grid-template-columns: 1.1fr .9fr
+    }
 
-async function doReset() {
-  hideResetModal();
-  try {
-    await fetch('/api/reset', { method:'POST' });
-    showToast('Resetting device...', 'success');
-  } catch(e) {
-    showToast('Reset command sent', 'success');
-  }
-}
+    .row-stats {
+      grid-template-columns: repeat(4, 1fr)
+    }
 
-function showToast(msg, type) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast ' + type + ' show';
-  setTimeout(() => t.className = 'toast', 3000);
-}
-</script>
+    .row-charts {
+      grid-template-columns: 1fr 1fr
+    }
+
+    /* ───── TANK VISUAL ───── */
+    .tank-card {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 380px;
+      position: relative;
+      overflow: hidden
+    }
+
+    .tank-card::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 50% 80%, rgba(0, 180, 255, .04) 0%, transparent 50%);
+      pointer-events: none
+    }
+
+    .tank-outer {
+      position: relative;
+      width: 180px;
+      height: 260px
+    }
+
+    .tank-body-svg {
+      width: 100%;
+      height: 100%
+    }
+
+    .tank-glass {
+      fill: none;
+      stroke: rgba(100, 140, 255, .18);
+      stroke-width: 2
+    }
+
+    .tank-shine {
+      fill: rgba(255, 255, 255, .03)
+    }
+
+    /* Water */
+    .water-group {
+      clip-path: url(#tankClip)
+    }
+
+    .water-fill {
+      transition: y 1.2s cubic-bezier(.22, 1, .36, 1), height 1.2s cubic-bezier(.22, 1, .36, 1)
+    }
+
+    .wave-slow {
+      animation: waveA 4s ease-in-out infinite
+    }
+
+    .wave-mid {
+      animation: waveB 3s ease-in-out infinite
+    }
+
+    .wave-fast {
+      animation: waveC 2.5s ease-in-out infinite
+    }
+
+    @keyframes waveA {
+
+      0%,
+      100% {
+        transform: translateX(0)
+      }
+
+      50% {
+        transform: translateX(-8px)
+      }
+    }
+
+    @keyframes waveB {
+
+      0%,
+      100% {
+        transform: translateX(0)
+      }
+
+      50% {
+        transform: translateX(6px)
+      }
+    }
+
+    @keyframes waveC {
+
+      0%,
+      100% {
+        transform: translateX(0)
+      }
+
+      50% {
+        transform: translateX(-5px)
+      }
+    }
+
+    /* Filling animation */
+    .filling-active .wave-slow {
+      animation-duration: 1.8s
+    }
+
+    .filling-active .wave-mid {
+      animation-duration: 1.2s
+    }
+
+    .filling-active .wave-fast {
+      animation-duration: .9s
+    }
+
+    .bubbles {
+      opacity: 0;
+      transition: opacity .5s
+    }
+
+    .filling-active .bubbles {
+      opacity: 1
+    }
+
+    .bubble {
+      fill: rgba(255, 255, 255, .25);
+      animation: rise 2.5s ease-in infinite
+    }
+
+    .bubble:nth-child(2) {
+      animation-delay: .5s;
+      animation-duration: 3s
+    }
+
+    .bubble:nth-child(3) {
+      animation-delay: 1.2s;
+      animation-duration: 2s
+    }
+
+    .bubble:nth-child(4) {
+      animation-delay: 1.8s;
+      animation-duration: 2.8s
+    }
+
+    @keyframes rise {
+      0% {
+        transform: translateY(0);
+        opacity: .5
+      }
+
+      100% {
+        transform: translateY(-200px);
+        opacity: 0
+      }
+    }
+
+    /* Droplets for filling */
+    .drip-container {
+      position: absolute;
+      top: -5px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 60px;
+      height: 30px;
+      opacity: 0;
+      transition: opacity .4s
+    }
+
+    .filling-active .drip-container {
+      opacity: 1
+    }
+
+    .drip {
+      position: absolute;
+      width: 3px;
+      height: 6px;
+      background: var(--cyan);
+      border-radius: 0 0 50% 50%;
+      opacity: 0;
+      animation: drip 1.6s linear infinite
+    }
+
+    .drip:nth-child(1) {
+      left: 10px;
+      animation-delay: 0s
+    }
+
+    .drip:nth-child(2) {
+      left: 25px;
+      animation-delay: .4s
+    }
+
+    .drip:nth-child(3) {
+      left: 40px;
+      animation-delay: .8s
+    }
+
+    @keyframes drip {
+      0% {
+        top: 0;
+        opacity: .8
+      }
+
+      80% {
+        opacity: .4
+      }
+
+      100% {
+        top: 28px;
+        opacity: 0
+      }
+    }
+
+    /* Percentage inside tank */
+    .tank-pct-label {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -55%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 2
+    }
+
+    .tank-pct-num {
+      font-size: 3rem;
+      font-weight: 900;
+      line-height: 1;
+      color: #fff;
+      text-shadow: 0 2px 20px rgba(0, 0, 0, .4)
+    }
+
+    .tank-pct-sym {
+      font-size: 1rem;
+      font-weight: 600;
+      color: rgba(255, 255, 255, .6)
+    }
+
+    .tank-pct-sub {
+      font-size: .62rem;
+      color: rgba(255, 255, 255, .45);
+      margin-top: 2px;
+      letter-spacing: .5px
+    }
+
+    /* Bottom info under tank */
+    .tank-meta {
+      text-align: center;
+      margin-top: 16px
+    }
+
+    .tank-meta-main {
+      font-size: 1.05rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, var(--cyan), var(--blue));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent
+    }
+
+    .tank-meta-sub {
+      font-size: .65rem;
+      color: var(--text3);
+      margin-top: 2px
+    }
+
+    /* ───── RIGHT PANEL ───── */
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px
+    }
+
+    /* Gauge */
+    .gauge-card {
+      text-align: center;
+      padding: 20px 18px
+    }
+
+    .gauge-wrap {
+      position: relative;
+      width: 140px;
+      height: 80px;
+      margin: 0 auto 8px
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: var(--surface2);
+      stroke-width: 10;
+      stroke-linecap: round
+    }
+
+    .gauge-fill {
+      fill: none;
+      stroke-width: 10;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1.2s cubic-bezier(.22, 1, .36, 1), stroke 1s;
+      filter: drop-shadow(0 0 6px currentColor)
+    }
+
+    .gauge-val {
+      font-size: 1.6rem;
+      font-weight: 800
+    }
+
+    .gauge-label {
+      font-size: .65rem;
+      color: var(--text3);
+      margin-top: 2px
+    }
+
+    /* Fill info */
+    .fill-info {
+      background: linear-gradient(135deg, rgba(0, 232, 135, .06), rgba(0, 212, 255, .06));
+      border: 1px solid rgba(0, 232, 135, .15);
+      border-radius: 14px;
+      padding: 16px;
+      text-align: center;
+      display: none
+    }
+
+    .fill-info.active {
+      display: block;
+      animation: fillGlow 2s infinite
+    }
+
+    @keyframes fillGlow {
+
+      0%,
+      100% {
+        border-color: rgba(0, 232, 135, .15)
+      }
+
+      50% {
+        border-color: rgba(0, 232, 135, .35)
+      }
+    }
+
+    .fill-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: rgba(0, 232, 135, .12);
+      color: var(--green);
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: .7rem;
+      font-weight: 700;
+      margin-bottom: 8px
+    }
+
+    .fill-badge::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      animation: blink 1s infinite
+    }
+
+    .fill-rate-val {
+      font-size: 1.5rem;
+      font-weight: 800;
+      color: var(--green)
+    }
+
+    .fill-eta-val {
+      font-size: .85rem;
+      color: var(--cyan);
+      margin-top: 4px
+    }
+
+    .fill-eta-label {
+      font-size: .6rem;
+      color: var(--text3)
+    }
+
+    .flow-bar {
+      height: 4px;
+      border-radius: 2px;
+      background: var(--surface2);
+      margin-top: 10px;
+      overflow: hidden
+    }
+
+    .flow-bar-inner {
+      height: 100%;
+      width: 200%;
+      background: linear-gradient(90deg, transparent, var(--cyan), var(--green), transparent);
+      animation: flowAnim 1.5s linear infinite
+    }
+
+    @keyframes flowAnim {
+      0% {
+        transform: translateX(-50%)
+      }
+
+      100% {
+        transform: translateX(0)
+      }
+    }
+
+    /* Last filled */
+    .last-fill-card {
+      text-align: center;
+      padding: 16px
+    }
+
+    .last-fill-val {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--cyan)
+    }
+
+    .last-fill-ago {
+      font-size: .68rem;
+      color: var(--text3);
+      margin-top: 2px
+    }
+
+    /* ───── STATS ROW ───── */
+    .stat-card {
+      padding: 14px;
+      position: relative;
+      overflow: hidden
+    }
+
+    .stat-card::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 40px;
+      height: 40px;
+      border-radius: 0 0 0 40px;
+      opacity: .08
+    }
+
+    .stat-card:nth-child(1)::after {
+      background: var(--blue)
+    }
+
+    .stat-card:nth-child(2)::after {
+      background: var(--cyan)
+    }
+
+    .stat-card:nth-child(3)::after {
+      background: var(--green)
+    }
+
+    .stat-card:nth-child(4)::after {
+      background: var(--purple)
+    }
+
+    .stat-icon {
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      margin-bottom: 8px
+    }
+
+    .stat-icon.blue {
+      background: rgba(79, 143, 255, .12);
+      color: var(--blue)
+    }
+
+    .stat-icon.cyan {
+      background: rgba(0, 212, 255, .12);
+      color: var(--cyan)
+    }
+
+    .stat-icon.green {
+      background: rgba(0, 232, 135, .12);
+      color: var(--green)
+    }
+
+    .stat-icon.purple {
+      background: rgba(168, 85, 247, .12);
+      color: var(--purple)
+    }
+
+    .stat-val {
+      font-size: 1.25rem;
+      font-weight: 700
+    }
+
+    .stat-unit {
+      font-size: .65rem;
+      color: var(--text3);
+      margin-left: 2px
+    }
+
+    .stat-lbl {
+      font-size: .6rem;
+      color: var(--text3);
+      margin-top: 2px
+    }
+
+    .stat-bar {
+      height: 3px;
+      border-radius: 2px;
+      background: var(--surface2);
+      margin-top: 8px;
+      overflow: hidden
+    }
+
+    .stat-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      transition: width 1s
+    }
+
+    /* ───── SVG CHART ───── */
+    .chart-card {
+      padding: 18px
+    }
+
+    .chart-tabs {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 12px
+    }
+
+    .chtab {
+      padding: 5px 12px;
+      border-radius: 6px;
+      font-size: .65rem;
+      font-weight: 600;
+      cursor: pointer;
+      background: var(--surface2);
+      color: var(--text3);
+      border: 1px solid transparent;
+      transition: all .2s;
+      user-select: none
+    }
+
+    .chtab.active {
+      background: var(--blue);
+      color: #fff
+    }
+
+    .chtab:hover:not(.active) {
+      border-color: var(--border);
+      color: var(--text2)
+    }
+
+    .chart-svg-wrap {
+      position: relative;
+      height: 160px
+    }
+
+    .chart-svg-wrap svg {
+      width: 100%;
+      height: 100%
+    }
+
+    .chart-grid-line {
+      stroke: rgba(100, 140, 255, .06);
+      stroke-width: 1
+    }
+
+    .chart-line {
+      fill: none;
+      stroke: var(--cyan);
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      filter: drop-shadow(0 0 4px rgba(0, 212, 255, .3))
+    }
+
+    .chart-area {
+      fill: url(#chartGrad);
+      opacity: .3
+    }
+
+    .chart-dot {
+      fill: var(--cyan);
+      filter: drop-shadow(0 0 3px var(--cyan))
+    }
+
+    .chart-label {
+      fill: var(--text3);
+      font-size: 9px;
+      font-family: 'Inter', sans-serif
+    }
+
+    .chart-no-data {
+      fill: var(--text3);
+      font-size: 11px;
+      font-family: 'Inter', sans-serif;
+      text-anchor: middle
+    }
+
+    /* ───── CONFIG ───── */
+    .cfg-toggle {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      padding: 9px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+      font-size: .78rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin: 14px auto;
+      transition: all .2s
+    }
+
+    .cfg-toggle:hover {
+      border-color: var(--blue);
+      color: var(--text)
+    }
+
+    .cfg-panel {
+      display: none;
+      animation: slideIn .3s ease
+    }
+
+    .cfg-panel.open {
+      display: block
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(-8px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    .form-group {
+      margin-bottom: 14px
+    }
+
+    .form-group label {
+      display: block;
+      font-size: .68rem;
+      font-weight: 600;
+      color: var(--text3);
+      margin-bottom: 5px;
+      text-transform: uppercase;
+      letter-spacing: .5px
+    }
+
+    .form-group input {
+      width: 100%;
+      padding: 10px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 9px;
+      color: var(--text);
+      font-family: 'Inter', sans-serif;
+      font-size: .85rem;
+      transition: border .2s
+    }
+
+    .form-group input:focus {
+      outline: none;
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(79, 143, 255, .12)
+    }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px
+    }
+
+    .btn {
+      padding: 10px 20px;
+      border: none;
+      border-radius: 9px;
+      font-family: 'Inter', sans-serif;
+      font-size: .8rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all .2s
+    }
+
+    .btn-p {
+      background: linear-gradient(135deg, var(--blue), var(--cyan));
+      color: #fff
+    }
+
+    .btn-p:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 18px rgba(79, 143, 255, .3)
+    }
+
+    .btn-d {
+      background: linear-gradient(135deg, var(--red), #dc2626);
+      color: #fff
+    }
+
+    .btn-d:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 18px rgba(255, 71, 87, .3)
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 10px;
+      margin-top: 18px
+    }
+
+    /* Modal */
+    .modal-bg {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, .75);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px)
+    }
+
+    .modal-bg.open {
+      display: flex
+    }
+
+    .modal {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 26px;
+      max-width: 380px;
+      width: 90%;
+      text-align: center
+    }
+
+    .modal h3 {
+      font-size: 1.05rem;
+      margin-bottom: 6px
+    }
+
+    .modal p {
+      color: var(--text2);
+      font-size: .82rem;
+      margin-bottom: 18px
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      padding: 10px 18px;
+      border-radius: 10px;
+      font-size: .82rem;
+      font-weight: 600;
+      z-index: 200;
+      transform: translateY(80px);
+      opacity: 0;
+      transition: all .3s
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1
+    }
+
+    .toast.ok {
+      background: var(--green);
+      color: #000
+    }
+
+    .toast.err {
+      background: var(--red);
+      color: #fff
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 20px 0 10px;
+      color: var(--text3);
+      font-size: .62rem;
+      letter-spacing: .5px
+    }
+
+    /* Responsive */
+    @media(max-width:768px) {
+
+      .row-hero,
+      .row-charts {
+        grid-template-columns: 1fr
+      }
+
+      .row-stats {
+        grid-template-columns: 1fr 1fr
+      }
+
+      .tank-outer {
+        width: 150px;
+        height: 220px
+      }
+
+      .tank-pct-num {
+        font-size: 2.4rem
+      }
+
+      .container {
+        padding: 10px
+      }
+
+      header h1 {
+        font-size: 1.2rem
+      }
+
+      .gauge-wrap {
+        width: 120px;
+        height: 70px
+      }
+    }
+
+    @media(max-width:400px) {
+      .row-stats {
+        grid-template-columns: 1fr
+      }
+
+      .form-row {
+        grid-template-columns: 1fr
+      }
+    }
+
+    ::-webkit-scrollbar {
+      width: 5px
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg)
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <div class="logo">
+        <div class="logo-icon">💧</div>
+        <h1>Water Tank Monitor</h1>
+      </div>
+      <div class="hdr-status">
+        <span class="dot on" id="dot"></span>
+        <span id="stTxt">Connecting...</span>
+        <span>·</span>
+        <span id="devName">WaterTank</span>
+      </div>
+    </header>
+
+    <!-- HERO: Tank + Right Panel -->
+    <div class="row row-hero">
+      <!-- Tank Visual -->
+      <div class="card tank-card" id="tankCard">
+        <div class="drip-container">
+          <div class="drip"></div>
+          <div class="drip"></div>
+          <div class="drip"></div>
+        </div>
+        <div class="tank-outer">
+          <svg class="tank-body-svg" viewBox="0 0 180 260">
+            <defs>
+              <clipPath id="tankClip">
+                <rect x="16" y="10" width="148" height="240" rx="16" />
+              </clipPath>
+              <linearGradient id="wGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" id="wg1" stop-color="rgba(0,200,255,.6)" />
+                <stop offset="100%" id="wg2" stop-color="rgba(0,100,220,.35)" />
+              </linearGradient>
+              <linearGradient id="tankBorder" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="rgba(100,160,255,.25)" />
+                <stop offset="100%" stop-color="rgba(100,160,255,.08)" />
+              </linearGradient>
+            </defs>
+            <!-- Tank outline -->
+            <rect x="16" y="10" width="148" height="240" rx="18" stroke="url(#tankBorder)" stroke-width="2.5"
+              fill="none" />
+            <!-- Inner glow -->
+            <rect x="20" y="14" width="140" height="232" rx="14" class="tank-shine" />
+            <!-- Tick marks -->
+            <line x1="10" y1="70" x2="16" y2="70" stroke="rgba(100,140,255,.15)" stroke-width="1" />
+            <line x1="10" y1="130" x2="16" y2="130" stroke="rgba(100,140,255,.15)" stroke-width="1" />
+            <line x1="10" y1="190" x2="16" y2="190" stroke="rgba(100,140,255,.15)" stroke-width="1" />
+            <text x="7" y="73" fill="rgba(100,140,255,.2)" font-size="7" text-anchor="end" font-family="Inter">75</text>
+            <text x="7" y="133" fill="rgba(100,140,255,.2)" font-size="7" text-anchor="end"
+              font-family="Inter">50</text>
+            <text x="7" y="193" fill="rgba(100,140,255,.2)" font-size="7" text-anchor="end"
+              font-family="Inter">25</text>
+            <!-- Water -->
+            <g class="water-group" clip-path="url(#tankClip)">
+              <rect id="wRect" x="16" y="250" width="148" height="0" fill="url(#wGrad)" />
+              <g id="wavesG">
+                <svg id="wavePos" x="6" y="250" width="168" height="24" viewBox="0 0 200 24" preserveAspectRatio="none">
+                  <path class="wave-slow" d="M0,12 Q25,4 50,12 T100,12 T150,12 T200,12 L200,24 L0,24Z"
+                    fill="rgba(0,200,255,.3)" />
+                  <path class="wave-mid" d="M0,14 Q30,20 60,14 T120,14 T180,14 L200,24 L0,24Z"
+                    fill="rgba(0,140,255,.2)" />
+                  <path class="wave-fast" d="M0,16 Q20,10 40,16 T80,16 T120,16 T160,16 T200,16 L200,24 L0,24Z"
+                    fill="rgba(0,220,255,.15)" />
+                </svg>
+              </g>
+              <!-- Bubbles -->
+              <g class="bubbles" id="bubblesG">
+                <circle class="bubble" cx="60" cy="240" r="3" />
+                <circle class="bubble" cx="100" cy="245" r="2" />
+                <circle class="bubble" cx="80" cy="235" r="2.5" />
+                <circle class="bubble" cx="120" cy="242" r="2" />
+              </g>
+            </g>
+          </svg>
+          <!-- Percentage overlay -->
+          <div class="tank-pct-label">
+            <div class="tank-pct-num" id="tPct">--</div>
+            <div class="tank-pct-sym">%</div>
+            <div class="tank-pct-sub" id="tSub">WATER LEVEL</div>
+          </div>
+        </div>
+        <div class="tank-meta">
+          <div class="tank-meta-main" id="tMeta">Waiting for data...</div>
+          <div class="tank-meta-sub" id="tMeta2">Sensor reading every 2s</div>
+        </div>
+      </div>
+
+      <!-- Right Panel -->
+      <div class="right-panel">
+        <!-- Gauge -->
+        <div class="card gauge-card">
+          <div class="card-hdr"><i style="background:rgba(0,212,255,.12);color:var(--cyan)">◉</i>Fill Level</div>
+          <div class="gauge-wrap">
+            <svg viewBox="0 0 150 85" width="100%" height="100%">
+              <path d="M15,75 A60,60 0 0,1 135,75" class="gauge-bg" />
+              <path d="M15,75 A60,60 0 0,1 135,75" class="gauge-fill" id="gFill" stroke="var(--cyan)"
+                stroke-dasharray="188.5" stroke-dashoffset="188.5" />
+            </svg>
+            <div style="position:absolute;bottom:0;width:100%;text-align:center">
+              <div class="gauge-val" id="gVal">--%</div>
+              <div class="gauge-label">Current Fill</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fill Info (visible when filling) -->
+        <div class="fill-info" id="fillBox">
+          <div class="fill-badge">FILLING</div>
+          <div class="fill-rate-val" id="fRate">+0.0%/min</div>
+          <div class="fill-eta-val" id="fEta">ETA: Calculating...</div>
+          <div class="fill-eta-label">Time to full</div>
+          <div class="flow-bar">
+            <div class="flow-bar-inner"></div>
+          </div>
+        </div>
+
+        <!-- Last Full -->
+        <div class="card last-fill-card">
+          <div class="card-hdr"><i style="background:rgba(168,85,247,.12);color:var(--purple)">◷</i>Last Full</div>
+          <div class="last-fill-val" id="lfTime">No data</div>
+          <div class="last-fill-ago" id="lfAgo"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="row row-stats">
+      <div class="card stat-card">
+        <div class="stat-icon blue">📏</div>
+        <div class="stat-val" id="sDist">--<span class="stat-unit">cm</span></div>
+        <div class="stat-lbl">Distance</div>
+        <div class="stat-bar">
+          <div class="stat-bar-fill" id="sDistBar" style="width:0;background:var(--blue)"></div>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-icon cyan">💧</div>
+        <div class="stat-val" id="sLvl">--<span class="stat-unit">%</span></div>
+        <div class="stat-lbl">Water Level</div>
+        <div class="stat-bar">
+          <div class="stat-bar-fill" id="sLvlBar" style="width:0;background:var(--cyan)"></div>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-icon green">⏱</div>
+        <div class="stat-val" id="sUp">--</div>
+        <div class="stat-lbl">Uptime</div>
+        <div class="stat-bar">
+          <div class="stat-bar-fill" style="width:60%;background:var(--green)"></div>
+        </div>
+      </div>
+      <div class="card stat-card">
+        <div class="stat-icon purple">📶</div>
+        <div class="stat-val" id="sRssi">--<span class="stat-unit">dBm</span></div>
+        <div class="stat-lbl">WiFi Signal</div>
+        <div class="stat-bar">
+          <div class="stat-bar-fill" id="sRssiBar" style="width:0;background:var(--purple)"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="row row-charts">
+      <div class="card chart-card">
+        <div class="card-hdr"><i style="background:rgba(0,212,255,.12);color:var(--cyan)">⟋</i>24-Hour Trend</div>
+        <div class="chart-svg-wrap" id="chart24"></div>
+      </div>
+      <div class="card chart-card">
+        <div class="card-hdr"><i style="background:rgba(0,232,135,.12);color:var(--green)">↗</i>Last Refill</div>
+        <div class="chart-svg-wrap" id="chartRefill"></div>
+      </div>
+    </div>
+
+    <!-- Config Toggle -->
+    <button class="cfg-toggle" onclick="toggleCfg()">⚙ Configuration</button>
+    <div class="cfg-panel" id="cfgPanel">
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-hdr"><i style="background:rgba(79,143,255,.12);color:var(--blue)">⊙</i>WiFi Settings</div>
+        <div class="form-row">
+          <div class="form-group"><label>SSID</label><input type="text" id="cfgSsid" placeholder="WiFi Name"></div>
+          <div class="form-group"><label>Password</label><input type="password" id="cfgPass"
+              placeholder="WiFi Password"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-hdr"><i style="background:rgba(0,232,135,.12);color:var(--green)">⊞</i>Tank Calibration</div>
+        <div class="form-row">
+          <div class="form-group"><label>Empty Distance (cm)</label><input type="number" id="cfgMin"
+              placeholder="e.g. 200"></div>
+          <div class="form-group"><label>Full Distance (cm)</label><input type="number" id="cfgMax"
+              placeholder="e.g. 20"></div>
+        </div>
+        <div style="font-size:.62rem;color:var(--text3);margin-top:-6px">Empty = sensor→water when empty · Full = when
+          full</div>
+      </div>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-hdr"><i style="background:rgba(168,85,247,.12);color:var(--purple)">⊘</i>Google Sheets</div>
+        <div class="form-group"><label>Webhook URL</label><input type="url" id="cfgHook"
+            placeholder="https://script.google.com/macros/s/..."></div>
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-p" onclick="saveCfg()">Save Settings</button>
+        <button class="btn btn-d" onclick="showRstModal()">Factory Reset</button>
+      </div>
+    </div>
+
+    <footer>Water Tank Monitor v1.0 · ESP8266</footer>
+  </div>
+
+  <!-- Reset Modal -->
+  <div class="modal-bg" id="rstModal">
+    <div class="modal">
+      <h3>⚠️ Factory Reset</h3>
+      <p>Erase all settings and restart in setup mode?</p>
+      <div class="btn-row" style="justify-content:center">
+        <button class="btn btn-d" onclick="doRst()">Reset</button>
+        <button class="btn" style="background:var(--surface);color:var(--text)" onclick="hideRstModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let hist = [], lastSt = {};
+
+    document.addEventListener('DOMContentLoaded', () => {
+      fetchSt(); fetchHist(); fetchCfg();
+      setInterval(fetchSt, 3000);
+      setInterval(fetchHist, 60000);
+    });
+
+    async function fetchSt() {
+      try {
+        const r = await fetch('/api/status');
+        const d = await r.json();
+        lastSt = d; updDash(d); setOn(true);
+      } catch (e) { setOn(false) }
+    }
+    function setOn(on) {
+      document.getElementById('dot').className = 'dot ' + (on ? 'on' : 'off');
+      document.getElementById('stTxt').textContent = on ? 'Online' : 'Offline';
+    }
+    function updDash(d) {
+      const p = Math.round(d.level || 0);
+      // Tank water
+      const H = 240, wH = (p / 100) * H, wY = 250 - wH;
+      const wr = document.getElementById('wRect');
+      wr.setAttribute('y', wY); wr.setAttribute('height', wH);
+      document.getElementById('wavePos').setAttribute('y', wY - 12);
+      // Move bubbles to water level
+      document.getElementById('bubblesG').setAttribute('transform', 'translate(0,' + (wY - 20) + ')');
+      // Gradient by level
+      const g1 = document.getElementById('wg1'), g2 = document.getElementById('wg2');
+      if (p < 20) { g1.setAttribute('stop-color', 'rgba(255,71,87,.6)'); g2.setAttribute('stop-color', 'rgba(200,40,50,.35)'); }
+      else if (p < 45) { g1.setAttribute('stop-color', 'rgba(255,190,46,.6)'); g2.setAttribute('stop-color', 'rgba(200,120,0,.35)'); }
+      else { g1.setAttribute('stop-color', 'rgba(0,200,255,.6)'); g2.setAttribute('stop-color', 'rgba(0,100,220,.35)'); }
+      // Pct
+      document.getElementById('tPct').textContent = p;
+      document.getElementById('tSub').textContent = p >= 90 ? 'TANK FULL' : p < 15 ? 'LOW LEVEL' : 'WATER LEVEL';
+      // Gauge
+      const off = 188.5 * (1 - p / 100);
+      const gf = document.getElementById('gFill');
+      gf.style.strokeDashoffset = off;
+      gf.style.stroke = p < 20 ? 'var(--red)' : p < 45 ? 'var(--yellow)' : 'var(--cyan)';
+      document.getElementById('gVal').textContent = p + '%';
+      // Meta
+      document.getElementById('tMeta').textContent = (d.distance || 0).toFixed(1) + ' cm from sensor';
+      document.getElementById('tMeta2').textContent = 'Updated every 2 seconds';
+      // Stats
+      document.getElementById('sDist').innerHTML = (d.distance || 0).toFixed(1) + '<span class="stat-unit">cm</span>';
+      document.getElementById('sLvl').innerHTML = p + '<span class="stat-unit">%</span>';
+      document.getElementById('sUp').textContent = fmtUp(d.uptime || 0);
+      document.getElementById('sRssi').innerHTML = (d.rssi || 0) + '<span class="stat-unit">dBm</span>';
+      // Stat bars
+      document.getElementById('sDistBar').style.width = Math.min(100, ((d.distance || 0) / 300) * 100) + '%';
+      document.getElementById('sLvlBar').style.width = p + '%';
+      const sig = Math.min(100, Math.max(0, (100 + ((d.rssi || 0)))));
+      document.getElementById('sRssiBar').style.width = sig + '%';
+      // Fill
+      const tc = document.getElementById('tankCard');
+      const fb = document.getElementById('fillBox');
+      if (d.filling) {
+        tc.classList.add('filling-active');
+        fb.classList.add('active'); fb.style.display = 'block';
+        document.getElementById('fRate').textContent = '+' + (d.fillRate || 0).toFixed(2) + '%/min';
+        document.getElementById('fEta').textContent = d.eta > 0 ? 'ETA: ' + fmtEta(d.eta) : 'ETA: Calculating...';
+      } else {
+        tc.classList.remove('filling-active');
+        fb.classList.remove('active'); fb.style.display = 'none';
+      }
+      if (d.name) document.getElementById('devName').textContent = d.name;
+    }
+    function fmtUp(s) { if (s < 60) return s + 's'; if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'; return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h' }
+    function fmtEta(m) { if (m < 1) return '< 1 min'; if (m < 60) return Math.round(m) + ' min'; return Math.floor(m / 60) + 'h ' + Math.round(m % 60) + 'm' }
+
+    // History & SVG Charts
+    async function fetchHist() {
+      try { const r = await fetch('/api/history'); const d = await r.json(); hist = d.data || []; drawChart('chart24', hist); drawRefill(); updLF(); } catch (e) { }
+    }
+    function drawChart(id, data) {
+      const el = document.getElementById(id);
+      if (!data.length) { el.innerHTML = '<svg viewBox="0 0 500 160"><text class="chart-no-data" x="250" y="85">No data yet</text></svg>'; return; }
+      const W = 500, H = 150, pad = 30, cW = W - pad * 2, cH = H - 20;
+      const mn = 0, mx = 100;
+      let pts = data.map((d, i) => {
+        const x = pad + (i / (data.length - 1 || 1)) * cW;
+        const y = H - 10 - ((d.l - mn) / (mx - mn)) * cH;
+        return { x, y, l: d.l, t: d.t };
+      });
+      let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+      svg += '<defs><linearGradient id="chartGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(0,212,255,.4)"/><stop offset="100%" stop-color="rgba(0,212,255,0)"/></linearGradient></defs>';
+      // Grid
+      for (let i = 0; i <= 4; i++) {
+        const y = H - 10 - (i / 4) * cH;
+        svg += '<line x1="' + pad + '" y1="' + y + '" x2="' + (W - pad) + '" y2="' + y + '" class="chart-grid-line"/>';
+        svg += '<text x="' + (pad - 4) + '" y="' + (y + 3) + '" class="chart-label" text-anchor="end">' + (i * 25) + '%</text>';
+      }
+      // Time labels
+      if (data.length > 1) {
+        const idxs = [0, Math.floor(data.length / 4), Math.floor(data.length / 2), Math.floor(3 * data.length / 4), data.length - 1];
+        idxs.forEach(i => {
+          if (i >= data.length) return;
+          const d = new Date(data[i].t * 1000);
+          const lbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+          svg += '<text x="' + pts[i].x + '" y="' + (H - 0) + '" class="chart-label" text-anchor="middle">' + lbl + '</text>';
+        });
+      }
+      // Area
+      let area = 'M' + pts[0].x + ',' + pts[0].y;
+      pts.forEach((p, i) => { if (i > 0) area += ' L' + p.x + ',' + p.y; });
+      area += ' L' + pts[pts.length - 1].x + ',' + (H - 10) + ' L' + pts[0].x + ',' + (H - 10) + ' Z';
+      svg += '<path d="' + area + '" class="chart-area"/>';
+      // Line
+      let line = 'M' + pts[0].x + ',' + pts[0].y;
+      pts.forEach((p, i) => { if (i > 0) line += ' L' + p.x + ',' + p.y; });
+      svg += '<path d="' + line + '" class="chart-line"/>';
+      // Last dot
+      const lp = pts[pts.length - 1];
+      svg += '<circle cx="' + lp.x + '" cy="' + lp.y + '" r="3" class="chart-dot"/>';
+      svg += '</svg>';
+      el.innerHTML = svg;
+    }
+    function drawRefill() {
+      if (!hist.length) { drawChart('chartRefill', []); return; }
+      let ri = 0;
+      for (let i = hist.length - 1; i > 0; i--) {
+        if (hist[i].l - hist[i - 1].l > 3) { let s = i - 1; while (s > 0 && hist[s].l - hist[s - 1].l > 0.5) s--; ri = Math.max(0, s); break; }
+      }
+      drawChart('chartRefill', hist.slice(ri));
+    }
+    function updLF() {
+      let lf = null;
+      for (let i = hist.length - 1; i >= 0; i--) { if (hist[i].l >= 95) { lf = new Date(hist[i].t * 1000); break; } }
+      const el = document.getElementById('lfTime'), ag = document.getElementById('lfAgo');
+      if (lf) {
+        el.textContent = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const m = Math.floor((Date.now() - lf.getTime()) / 60000);
+        ag.textContent = m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
+      } else { el.textContent = 'No data'; ag.textContent = ''; }
+    }
+
+    // Config
+    async function fetchCfg() {
+      try {
+        const r = await fetch('/api/config'); const d = await r.json();
+        document.getElementById('cfgSsid').value = d.ssid || '';
+        document.getElementById('cfgMin').value = d.tankMin || '';
+        document.getElementById('cfgMax').value = d.tankMax || '';
+        document.getElementById('cfgHook').value = d.webhook || '';
+      } catch (e) { }
+    }
+    function toggleCfg() { document.getElementById('cfgPanel').classList.toggle('open') }
+    async function saveCfg() {
+      const b = {
+        ssid: document.getElementById('cfgSsid').value, pass: document.getElementById('cfgPass').value,
+        tankMin: parseInt(document.getElementById('cfgMin').value) || 200,
+        tankMax: parseInt(document.getElementById('cfgMax').value) || 20,
+        webhook: document.getElementById('cfgHook').value
+      };
+      try {
+        const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });
+        const d = await r.json();
+        toast(d.ok ? 'Settings saved!' : 'Error', 'ok');
+      } catch (e) { toast('Connection error', 'err') }
+    }
+    function showRstModal() { document.getElementById('rstModal').classList.add('open') }
+    function hideRstModal() { document.getElementById('rstModal').classList.remove('open') }
+    async function doRst() { hideRstModal(); try { await fetch('/api/reset', { method: 'POST' }); toast('Resetting...', 'ok'); } catch (e) { toast('Reset sent', 'ok'); } }
+    function toast(m, t) { const e = document.getElementById('toast'); e.textContent = m; e.className = 'toast ' + t + ' show'; setTimeout(() => e.className = 'toast', 3000); }
+  </script>
 </body>
+
 </html>
