@@ -20,32 +20,32 @@
  *  GND               → GND
  */
 
-#include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
-#include <ESP8266mDNS.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecureBearSSL.h>
-#include <EEPROM.h>
-#include <ArduinoJson.h>
 #include "dashboard.h"
+#include <ArduinoJson.h>
+#include <EEPROM.h>
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WebServer.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266mDNS.h>
+#include <WiFiClientSecureBearSSL.h>
 
 // ─── Pin Definitions ──────────────────────────────────────────
-#define TRIGGER_PIN D6  // GPIO12
-#define ECHO_PIN    D7  // GPIO13
+#define TRIGGER_PIN D6 // GPIO12
+#define ECHO_PIN D7    // GPIO13
 
 // ─── Constants ───────────────────────────────────────────────
-#define EEPROM_SIZE         512
-#define EEPROM_MAGIC        0xA5
-#define WIFI_CONNECT_TIMEOUT 15000  // 15 seconds
-#define AP_SSID             "WaterTank-Setup"
-#define AP_PASS             ""      // Open network for easy setup
-#define MDNS_NAME           "watertank"
-#define SENSOR_SAMPLES      5       // Number of readings to average
-#define SENSOR_INTERVAL     2000    // Read sensor every 2s
-#define LOG_INTERVAL        300000  // Log to Google Sheets every 5 min
-#define HISTORY_SIZE        288     // 24h at 5-min intervals
-#define FILL_WINDOW         24      // 2 min window (24 * 5s readings)
-#define FILL_THRESHOLD      3.0     // >3% rise in window = filling
+#define EEPROM_SIZE 512
+#define EEPROM_MAGIC 0xA5
+#define WIFI_CONNECT_TIMEOUT 15000 // 15 seconds
+#define AP_SSID "WaterTank-Setup"
+#define AP_PASS "" // Open network for easy setup
+#define MDNS_NAME "watertank"
+#define SENSOR_SAMPLES 5     // Number of readings to average
+#define SENSOR_INTERVAL 2000 // Read sensor every 2s
+#define LOG_INTERVAL 300000  // Log to Google Sheets every 5 min
+#define HISTORY_SIZE 288     // 24h at 5-min intervals
+#define FILL_WINDOW 24       // 2 min window (24 * 5s readings)
+#define FILL_THRESHOLD 3.0   // >3% rise in window = filling
 
 // ─── EEPROM Layout ───────────────────────────────────────────
 // Byte 0:   Magic byte (0xA5 = configured)
@@ -56,12 +56,12 @@
 // Byte 101-356: Webhook URL (256 bytes)
 // Byte 357-388: Device name (32 bytes)
 struct Config {
-  char     ssid[33];
-  char     pass[65];
-  uint16_t tankEmpty;    // Distance when tank is empty (sensor to bottom)
-  uint16_t tankFull;     // Distance when tank is full (sensor to water surface)
-  char     webhook[257];
-  char     name[33];
+  char ssid[33];
+  char pass[65];
+  uint16_t tankEmpty; // Distance when tank is empty (sensor to bottom)
+  uint16_t tankFull;  // Distance when tank is full (sensor to water surface)
+  char webhook[257];
+  char name[33];
 };
 
 // ─── Global State ────────────────────────────────────────────
@@ -71,21 +71,21 @@ bool apMode = false;
 
 // Sensor
 float currentDistance = 0;
-float currentLevel = 0;       // 0-100%
+float currentLevel = 0; // 0-100%
 unsigned long lastSensorRead = 0;
 
 // Fill detection
 float levelHistory[FILL_WINDOW];
 int levelHistIdx = 0;
 bool isFilling = false;
-float fillRate = 0;            // %/min
-float fillEta = 0;             // minutes to full
+float fillRate = 0; // %/min
+float fillEta = 0;  // minutes to full
 unsigned long lastFillCheck = 0;
 
 // History buffer (circular)
 struct HistoryEntry {
   uint32_t timestamp;
-  float    level;
+  float level;
 };
 HistoryEntry historyBuf[HISTORY_SIZE];
 int historyHead = 0;
@@ -122,7 +122,8 @@ void setup() {
   digitalWrite(TRIGGER_PIN, LOW);
 
   // Initialize fill detection history
-  for (int i = 0; i < FILL_WINDOW; i++) levelHistory[i] = -1;
+  for (int i = 0; i < FILL_WINDOW; i++)
+    levelHistory[i] = -1;
 
   // Load config from EEPROM
   EEPROM.begin(EEPROM_SIZE);
@@ -156,7 +157,8 @@ void setup() {
 // ══════════════════════════════════════════════════════════════
 void loop() {
   server.handleClient();
-  if (!apMode) MDNS.update();
+  if (!apMode)
+    MDNS.update();
 
   unsigned long now = millis();
 
@@ -165,7 +167,8 @@ void loop() {
     lastSensorRead = now;
     currentDistance = readDistance();
     currentLevel = calculateLevel(currentDistance);
-    Serial.printf("Distance: %.1f cm | Level: %.1f%%\n", currentDistance, currentLevel);
+    Serial.printf("Distance: %.1f cm | Level: %.1f%%\n", currentDistance,
+                  currentLevel);
     updateFillDetection();
   }
 
@@ -185,18 +188,20 @@ void loadConfig() {
 
   if (EEPROM.read(0) != EEPROM_MAGIC) {
     Serial.println("No saved config found");
-    config.tankEmpty = 200;  // Default: 200cm when empty
-    config.tankFull = 20;    // Default: 20cm when full
+    config.tankEmpty = 200; // Default: 200cm when empty
+    config.tankFull = 20;   // Default: 20cm when full
     strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
     return;
   }
 
   // Read SSID
-  for (int i = 0; i < 32; i++) config.ssid[i] = EEPROM.read(1 + i);
+  for (int i = 0; i < 32; i++)
+    config.ssid[i] = EEPROM.read(1 + i);
   config.ssid[32] = '\0';
 
   // Read password
-  for (int i = 0; i < 64; i++) config.pass[i] = EEPROM.read(33 + i);
+  for (int i = 0; i < 64; i++)
+    config.pass[i] = EEPROM.read(33 + i);
   config.pass[64] = '\0';
 
   // Read tank parameters
@@ -204,35 +209,44 @@ void loadConfig() {
   config.tankFull = EEPROM.read(99) | (EEPROM.read(100) << 8);
 
   // Read webhook URL
-  for (int i = 0; i < 256; i++) config.webhook[i] = EEPROM.read(101 + i);
+  for (int i = 0; i < 256; i++)
+    config.webhook[i] = EEPROM.read(101 + i);
   config.webhook[256] = '\0';
 
   // Read device name
-  for (int i = 0; i < 32; i++) config.name[i] = EEPROM.read(357 + i);
+  for (int i = 0; i < 32; i++)
+    config.name[i] = EEPROM.read(357 + i);
   config.name[32] = '\0';
 
   // Validate
-  if (config.tankEmpty == 0) config.tankEmpty = 200;
-  if (config.tankFull == 0) config.tankFull = 20;
-  if (strlen(config.name) == 0) strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
+  if (config.tankEmpty == 0)
+    config.tankEmpty = 200;
+  if (config.tankFull == 0)
+    config.tankFull = 20;
+  if (strlen(config.name) == 0)
+    strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
 
-  Serial.printf("Config loaded: SSID=%s, Empty=%dcm, Full=%dcm\n",
-                config.ssid, config.tankEmpty, config.tankFull);
+  Serial.printf("Config loaded: SSID=%s, Empty=%dcm, Full=%dcm\n", config.ssid,
+                config.tankEmpty, config.tankFull);
 }
 
 void saveConfigToEEPROM() {
   EEPROM.write(0, EEPROM_MAGIC);
 
-  for (int i = 0; i < 32; i++) EEPROM.write(1 + i, config.ssid[i]);
-  for (int i = 0; i < 64; i++) EEPROM.write(33 + i, config.pass[i]);
+  for (int i = 0; i < 32; i++)
+    EEPROM.write(1 + i, config.ssid[i]);
+  for (int i = 0; i < 64; i++)
+    EEPROM.write(33 + i, config.pass[i]);
 
   EEPROM.write(97, config.tankEmpty & 0xFF);
   EEPROM.write(98, (config.tankEmpty >> 8) & 0xFF);
   EEPROM.write(99, config.tankFull & 0xFF);
   EEPROM.write(100, (config.tankFull >> 8) & 0xFF);
 
-  for (int i = 0; i < 256; i++) EEPROM.write(101 + i, config.webhook[i]);
-  for (int i = 0; i < 32; i++) EEPROM.write(357 + i, config.name[i]);
+  for (int i = 0; i < 256; i++)
+    EEPROM.write(101 + i, config.webhook[i]);
+  for (int i = 0; i < 32; i++)
+    EEPROM.write(357 + i, config.name[i]);
 
   EEPROM.commit();
   Serial.println("Config saved to EEPROM");
@@ -240,7 +254,8 @@ void saveConfigToEEPROM() {
 
 void factoryReset() {
   Serial.println("=== FACTORY RESET ===");
-  for (int i = 0; i < EEPROM_SIZE; i++) EEPROM.write(i, 0);
+  for (int i = 0; i < EEPROM_SIZE; i++)
+    EEPROM.write(i, 0);
   EEPROM.commit();
   delay(500);
   ESP.restart();
@@ -270,6 +285,11 @@ bool connectWiFi() {
 void startAP() {
   apMode = true;
   WiFi.mode(WIFI_AP);
+
+  // Explicitly configure AP IP to 192.168.4.1 to be safe
+  IPAddress apIP(192, 168, 4, 1);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+
   WiFi.softAP(AP_SSID, AP_PASS);
   Serial.print("AP IP: ");
   Serial.println(WiFi.softAPIP());
@@ -294,27 +314,31 @@ float readDistance() {
     long duration = pulseIn(ECHO_PIN, HIGH, 50000); // 50ms timeout (~8.5m)
 
     if (duration > 0) {
-      float dist = (duration * 0.0343) / 2.0;  // Speed of sound = 343 m/s
-      if (dist > 2 && dist < 500) {  // Valid range: 2-500cm
+      float dist = (duration * 0.0343) / 2.0; // Speed of sound = 343 m/s
+      if (dist > 2 && dist < 500) {           // Valid range: 2-500cm
         total += dist;
         valid++;
       }
     }
-    delay(30);  // JSN-SR04T needs ~30ms between readings
+    delay(30); // JSN-SR04T needs ~30ms between readings
   }
 
-  return valid > 0 ? total / valid : currentDistance;  // Keep last reading if no valid
+  return valid > 0 ? total / valid
+                   : currentDistance; // Keep last reading if no valid
 }
 
 float calculateLevel(float distance) {
-  if (config.tankEmpty <= config.tankFull) return 0;
+  if (config.tankEmpty <= config.tankFull)
+    return 0;
 
   float level = 100.0 * (config.tankEmpty - distance) /
                 (config.tankEmpty - config.tankFull);
 
   // Clamp 0-100
-  if (level < 0) level = 0;
-  if (level > 100) level = 100;
+  if (level < 0)
+    level = 0;
+  if (level > 100)
+    level = 100;
   return level;
 }
 
@@ -329,21 +353,24 @@ void updateFillDetection() {
   // Need at least half the window filled
   int filled = 0;
   for (int i = 0; i < FILL_WINDOW; i++) {
-    if (levelHistory[i] >= 0) filled++;
+    if (levelHistory[i] >= 0)
+      filled++;
   }
-  if (filled < FILL_WINDOW / 2) return;
+  if (filled < FILL_WINDOW / 2)
+    return;
 
   // Find oldest valid entry
-  int oldest = levelHistIdx;  // Points to oldest entry in circular buffer
+  int oldest = levelHistIdx; // Points to oldest entry in circular buffer
   float oldestLevel = levelHistory[oldest];
-  if (oldestLevel < 0) return;
+  if (oldestLevel < 0)
+    return;
 
   float diff = currentLevel - oldestLevel;
   float windowMinutes = (FILL_WINDOW * SENSOR_INTERVAL) / 60000.0;
 
   if (diff > FILL_THRESHOLD) {
     isFilling = true;
-    fillRate = diff / windowMinutes;  // %/min
+    fillRate = diff / windowMinutes; // %/min
     if (fillRate > 0.01) {
       fillEta = (100.0 - currentLevel) / fillRate;
     } else {
@@ -363,20 +390,24 @@ void addHistoryEntry() {
   historyBuf[historyHead].timestamp = millis() / 1000;
   historyBuf[historyHead].level = currentLevel;
   historyHead = (historyHead + 1) % HISTORY_SIZE;
-  if (historyCount < HISTORY_SIZE) historyCount++;
+  if (historyCount < HISTORY_SIZE)
+    historyCount++;
 }
 
 // ══════════════════════════════════════════════════════════════
 //  GOOGLE SHEETS LOGGING
 // ══════════════════════════════════════════════════════════════
 void logToGoogleSheets() {
-  if (strlen(config.webhook) < 10) return;  // No webhook configured
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (strlen(config.webhook) < 10)
+    return; // No webhook configured
+  if (WiFi.status() != WL_CONNECTED)
+    return;
 
   Serial.println("Logging to Google Sheets...");
 
-  std::unique_ptr<BearSSL::WiFiClientSecure> client(new BearSSL::WiFiClientSecure);
-  client->setInsecure();  // Google Apps Script uses valid SSL
+  std::unique_ptr<BearSSL::WiFiClientSecure> client(
+      new BearSSL::WiFiClientSecure);
+  client->setInsecure(); // Google Apps Script uses valid SSL
 
   HTTPClient http;
   if (http.begin(*client, config.webhook)) {
@@ -416,7 +447,8 @@ void setupRoutes() {
   // Serve gzipped dashboard
   server.on("/", HTTP_GET, []() {
     server.sendHeader("Content-Encoding", "gzip");
-    server.send_P(200, "text/html", (const char*)DASHBOARD_GZ, DASHBOARD_GZ_LEN);
+    server.send_P(200, "text/html", (const char *)DASHBOARD_GZ,
+                  DASHBOARD_GZ_LEN);
   });
 
   // API: Current status
@@ -443,7 +475,8 @@ void setupRoutes() {
     int start = (historyCount < HISTORY_SIZE) ? 0 : historyHead;
     for (int i = 0; i < historyCount; i++) {
       int idx = (start + i) % HISTORY_SIZE;
-      if (i > 0) json += ",";
+      if (i > 0)
+        json += ",";
       json += "{\"t\":";
       json += historyBuf[idx].timestamp;
       json += ",\"l\":";
@@ -471,14 +504,16 @@ void setupRoutes() {
   // API: Save config
   server.on("/api/config", HTTP_POST, []() {
     if (!server.hasArg("plain")) {
-      server.send(400, "application/json", "{\"ok\":false,\"error\":\"No body\"}");
+      server.send(400, "application/json",
+                  "{\"ok\":false,\"error\":\"No body\"}");
       return;
     }
 
     StaticJsonDocument<512> doc;
     DeserializationError err = deserializeJson(doc, server.arg("plain"));
     if (err) {
-      server.send(400, "application/json", "{\"ok\":false,\"error\":\"Bad JSON\"}");
+      server.send(400, "application/json",
+                  "{\"ok\":false,\"error\":\"Bad JSON\"}");
       return;
     }
 
@@ -491,8 +526,10 @@ void setupRoutes() {
     }
 
     // Update tank params
-    if (doc.containsKey("tankMin")) config.tankEmpty = doc["tankMin"];
-    if (doc.containsKey("tankMax")) config.tankFull = doc["tankMax"];
+    if (doc.containsKey("tankMin"))
+      config.tankEmpty = doc["tankMin"];
+    if (doc.containsKey("tankMax"))
+      config.tankFull = doc["tankMax"];
 
     // Update webhook
     if (doc.containsKey("webhook")) {
@@ -510,7 +547,8 @@ void setupRoutes() {
 
   // API: Factory reset
   server.on("/api/reset", HTTP_POST, []() {
-    server.send(200, "application/json", "{\"ok\":true,\"msg\":\"Resetting...\"}");
+    server.send(200, "application/json",
+                "{\"ok\":true,\"msg\":\"Resetting...\"}");
     delay(500);
     factoryReset();
   });
@@ -518,7 +556,8 @@ void setupRoutes() {
   // 404 handler
   server.onNotFound([]() {
     server.sendHeader("Content-Encoding", "gzip");
-    server.send_P(200, "text/html", (const char*)DASHBOARD_GZ, DASHBOARD_GZ_LEN);
+    server.send_P(200, "text/html", (const char *)DASHBOARD_GZ,
+                  DASHBOARD_GZ_LEN);
   });
 }
 
@@ -597,9 +636,12 @@ else{m.className='msg err';m.textContent='Error saving. Try again.';m.style.disp
     }
 
     // Set defaults
-    if (config.tankEmpty == 0) config.tankEmpty = 200;
-    if (config.tankFull == 0) config.tankFull = 20;
-    if (strlen(config.name) == 0) strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
+    if (config.tankEmpty == 0)
+      config.tankEmpty = 200;
+    if (config.tankFull == 0)
+      config.tankFull = 20;
+    if (strlen(config.name) == 0)
+      strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
 
     saveConfigToEEPROM();
     server.send(200, "application/json", "{\"ok\":true}");
@@ -610,7 +652,7 @@ else{m.className='msg err';m.textContent='Error saving. Try again.';m.style.disp
 
   // Captive portal: redirect all unknown requests to root
   server.onNotFound([]() {
-    server.sendHeader("Location", "http://0.0.0.0/", true);
+    server.sendHeader("Location", "http://192.168.4.1/", true);
     server.send(302, "text/plain", "");
   });
 }
