@@ -28,12 +28,11 @@ function doPost(e) {
         "Water Level (%)",
         "Distance (cm)",
         "Is Filling",
-        "Fill Rate (%/min)",
-        "Device Name"
+        "Fill Rate (%/min)"
       ]);
 
       // Format header row
-      var headerRange = sheet.getRange(1, 1, 1, 6);
+      var headerRange = sheet.getRange(1, 1, 1, 5);
       headerRange.setFontWeight("bold");
       headerRange.setBackground("#4285f4");
       headerRange.setFontColor("#ffffff");
@@ -45,8 +44,7 @@ function doPost(e) {
       data.level || 0,
       data.distance || 0,
       data.filling ? "Yes" : "No",
-      data.fillRate || 0,
-      data.deviceName || "WaterTank"
+      data.fillRate || 0
     ]);
 
     return ContentService
@@ -61,22 +59,17 @@ function doPost(e) {
 }
 
 /**
- * doGet — Returns the last 288 data rows (24h at 5-min intervals) as JSON.
- * 
- * The dashboard browser fetches this to populate charts with historical data
- * that persists across ESP8266 reboots.
+ * doGet — Returns the last 288 data rows (24h at 5-min intervals) as JSON,
+ * plus the timestamp of the last time the tank was full (>=95%).
  * 
  * Response format:
  * {
  *   "data": [
  *     { "t": 1741234567, "l": 72.5 },
  *     ...
- *   ]
+ *   ],
+ *   "lastFull": 1741200000   // Unix epoch of last full event, or null
  * }
- * 
- * Where:
- *   t = Unix epoch seconds (timestamp)
- *   l = Water level percentage
  */
 function doGet(e) {
   try {
@@ -86,7 +79,7 @@ function doGet(e) {
     // No data (only header or empty)
     if (lastRow <= 1) {
       return ContentService
-        .createTextOutput(JSON.stringify({ status: "ok", data: [] }))
+        .createTextOutput(JSON.stringify({ status: "ok", data: [], lastFull: null }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -120,13 +113,70 @@ function doGet(e) {
       }
     }
 
+    // ─── Find Last Fill Session ───────────────────────────────
+    // Scan backwards through last 1000 rows to find the most recent
+    // fill session. Returns: { startTime, endTime, fromLevel, toLevel, durationMin }
+    var lastFilled = null;
+    var scanRows = Math.min(1000, lastRow - 1);
+    var scanStart = Math.max(2, lastRow - scanRows + 1);
+    // Read columns A (Timestamp), B (Level), D (Is Filling)
+    var scanRange = sheet.getRange(scanStart, 1, lastRow - scanStart + 1, 4);
+    var scanValues = scanRange.getValues();
+
+    // Step 1: Find the last row where filling = "Yes" (end of most recent session)
+    var endIdx = -1;
+    for (var j = scanValues.length - 1; j >= 0; j--) {
+      var filling = String(scanValues[j][3]).trim().toLowerCase();
+      if (filling === "yes") {
+        endIdx = j;
+        break;
+      }
+    }
+
+    if (endIdx >= 0) {
+      // Step 2: Walk backwards from endIdx to find the start of this fill session
+      var startIdx = endIdx;
+      for (var k = endIdx - 1; k >= 0; k--) {
+        var f = String(scanValues[k][3]).trim().toLowerCase();
+        if (f === "yes") {
+          startIdx = k;
+        } else {
+          break; // First non-filling row = session started after this
+        }
+      }
+
+      // Extract timestamps and levels
+      var endTs = scanValues[endIdx][0];
+      var startTs = scanValues[startIdx][0];
+      var fromLevel = parseFloat(scanValues[startIdx][1]) || 0;
+      var toLevel = parseFloat(scanValues[endIdx][1]) || 0;
+
+      var endEpoch = (endTs instanceof Date) ? Math.floor(endTs.getTime() / 1000) : Math.floor(endTs);
+      var startEpoch = (startTs instanceof Date) ? Math.floor(startTs.getTime() / 1000) : Math.floor(startTs);
+      var durationMin = Math.round((endEpoch - startEpoch) / 60);
+
+      // If the row just before the fill session exists, use its level as the true "from"
+      if (startIdx > 0) {
+        var preLevel = parseFloat(scanValues[startIdx - 1][1]) || 0;
+        fromLevel = preLevel;
+      }
+
+      lastFilled = {
+        startTime: startEpoch,
+        endTime: endEpoch,
+        fromLevel: Math.round(fromLevel),
+        toLevel: Math.round(toLevel),
+        durationMin: Math.max(1, durationMin) // At least 1 min
+      };
+    }
+
     return ContentService
-      .createTextOutput(JSON.stringify({ status: "ok", data: result }))
+      .createTextOutput(JSON.stringify({ status: "ok", data: result, lastFilled: lastFilled }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
     return ContentService
-      .createTextOutput(JSON.stringify({ status: "error", message: error.toString(), data: [] }))
+      .createTextOutput(JSON.stringify({ status: "error", message: error.toString(), data: [], lastFilled: null }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }

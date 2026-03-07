@@ -46,7 +46,6 @@ inline void logToGoogleSheets() {
     doc["distance"] = round(currentDistance * 10) / 10.0;
     doc["filling"] = isFilling;
     doc["fillRate"] = round(fillRate * 100) / 100.0;
-    doc["deviceName"] = config.name;
 
     String payload;
     serializeJson(doc, payload);

@@ -1160,11 +1160,13 @@
           </div>
         </div>
 
-        <!-- Last Full -->
+        <!-- Last Filled -->
         <div class="card last-fill-card">
-          <div class="card-hdr"><i style="background:rgba(168,85,247,.12);color:var(--purple)">◷</i>Last Full</div>
-          <div class="last-fill-val" id="lfTime">No data</div>
-          <div class="last-fill-ago" id="lfAgo"></div>
+          <div class="card-hdr"><i style="background:rgba(168,85,247,.12);color:var(--purple)">◷</i>Last Filled</div>
+          <div id="lfContent">
+            <div class="last-fill-val" id="lfTime">No data</div>
+            <div class="last-fill-ago" id="lfAgo"></div>
+          </div>
         </div>
       </div>
     </div>
@@ -1465,9 +1467,11 @@
         const r = await fetch(webhookUrl);
         const d = await r.json();
         if (d.data && d.data.length) {
-          sheetsHist = d.data; // Already has {t: unixEpoch, l: level}
+          sheetsHist = d.data;
           mergeAndRender();
         }
+        // Update Last Filled from server-side scan
+        updLFFromSheets(d.lastFilled || null);
       } catch (e) { console.log('Sheets fetch error:', e); }
     }
     function mergeAndRender() {
@@ -1489,7 +1493,6 @@
       if (deduped.length > 288) deduped = deduped.slice(-288);
       drawChart('chart24', deduped, true);
       drawRefillFromMerged(deduped);
-      updLFFromMerged(deduped);
     }
     async function fetchHist() {
       try {
@@ -1560,20 +1563,42 @@
       }
       drawChart('chartRefill', merged.slice(ri), true);
     }
-    function updLFFromMerged(merged) {
-      let lf = null;
-      for (let i = merged.length - 1; i >= 0; i--) {
-        if (merged[i].l >= 95) {
-          lf = new Date(merged[i].t * 1000);
-          break;
-        }
+    function updLFFromSheets(session) {
+      const box = document.getElementById('lfContent');
+      if (!session || !session.endTime) {
+        box.innerHTML = '<div class="last-fill-val">No filling recorded yet</div>';
+        return;
       }
-      const el = document.getElementById('lfTime'), ag = document.getElementById('lfAgo');
-      if (lf) {
-        el.textContent = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const m = Math.floor((Date.now() - lf.getTime()) / 60000);
-        ag.textContent = m < 1 ? 'Just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
-      } else { el.textContent = 'No data'; ag.textContent = ''; }
+      const lf = new Date(session.endTime * 1000);
+      const m = Math.floor((Date.now() - lf.getTime()) / 60000);
+      const ago = m < 1 ? 'Just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
+      const timeStr = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const from = session.fromLevel || 0;
+      const to = session.toLevel || 0;
+      const dur = session.durationMin || 1;
+      const durStr = dur >= 60 ? Math.floor(dur / 60) + 'h ' + (dur % 60) + 'min' : dur + ' min';
+
+      box.innerHTML =
+        '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
+        '<div class="last-fill-val">' + timeStr + '</div>' +
+        '<div class="last-fill-ago">' + ago + '</div>' +
+        '</div>' +
+        // Graphical bar
+        '<div style="position:relative;height:28px;background:rgba(255,255,255,.04);border-radius:8px;overflow:hidden;margin:10px 0 8px">' +
+        // From zone (dark)
+        '<div style="position:absolute;left:0;top:0;width:' + from + '%;height:100%;background:rgba(100,140,255,.1);border-radius:8px 0 0 8px"></div>' +
+        // Filled zone (gradient)
+        '<div style="position:absolute;left:' + from + '%;top:0;width:' + (to - from) + '%;height:100%;background:linear-gradient(90deg,var(--purple),var(--cyan));border-radius:4px;transition:width .5s"></div>' +
+        // From label
+        '<div style="position:absolute;left:' + Math.max(1, from - 1) + '%;top:50%;transform:translateY(-50%);font-size:.65rem;font-weight:700;color:var(--text3);padding:0 4px">' + from + '%</div>' +
+        // To label
+        '<div style="position:absolute;left:' + Math.min(92, to + 1) + '%;top:50%;transform:translateY(-50%);font-size:.65rem;font-weight:700;color:#fff;padding:0 4px">' + to + '%</div>' +
+        '</div>' +
+        // Stats row
+        '<div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text3);margin-top:4px">' +
+        '<span>+' + (to - from) + '% filled</span>' +
+        '<span>⏱ ' + durStr + '</span>' +
+        '</div>';
     }
     function drawRefill() {
       if (!hist.length) { drawChart('chartRefill', []); return; }
