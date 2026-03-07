@@ -1269,19 +1269,30 @@
   <div class="toast" id="toast"></div>
 
   <script>
-    let hist = [], lastSt = {};
+    let hist = [], sheetsHist = [], lastSt = {}, bootEpoch = 0, webhookUrl = '';
 
     document.addEventListener('DOMContentLoaded', () => {
       fetchSt(); fetchHist(); fetchCfg();
       setInterval(fetchSt, 3000);
       setInterval(fetchHist, 60000);
+      // Fetch Sheets history after a small delay to let config load first
+      setTimeout(fetchSheetsHist, 2000);
+      // Refresh Sheets data every 5 minutes
+      setInterval(fetchSheetsHist, 300000);
     });
 
     async function fetchSt() {
       try {
         const r = await fetch('/api/status');
         const d = await r.json();
-        lastSt = d; updDash(d); setOn(true);
+        lastSt = d;
+        // Anchor device uptime to real browser clock.
+        // d.nowEpoch = seconds since boot; Date.now()/1000 = real unix seconds.
+        // bootEpoch = the real unix timestamp at which the device booted.
+        if (d.nowEpoch !== undefined) {
+          bootEpoch = Math.floor(Date.now() / 1000) - d.nowEpoch;
+        }
+        updDash(d); setOn(true);
       } catch (e) { setOn(false) }
     }
     function setOn(on) {
@@ -1342,10 +1353,53 @@
     function fmtEta(m) { if (m < 1) return '< 1 min'; if (m < 60) return Math.round(m) + ' min'; return Math.floor(m / 60) + 'h ' + Math.round(m % 60) + 'm' }
 
     // History & SVG Charts
-    async function fetchHist() {
-      try { const r = await fetch('/api/history'); const d = await r.json(); hist = d.data || []; drawChart('chart24', hist); drawRefill(); updLF(); } catch (e) { }
+    async function fetchSheetsHist() {
+      try {
+        // Get webhook URL from config if we don't have it
+        if (!webhookUrl) {
+          const cr = await fetch('/api/config');
+          const cd = await cr.json();
+          webhookUrl = cd.webhook || '';
+        }
+        if (!webhookUrl || webhookUrl.length < 10) return;
+        const r = await fetch(webhookUrl);
+        const d = await r.json();
+        if (d.data && d.data.length) {
+          sheetsHist = d.data; // Already has {t: unixEpoch, l: level}
+          mergeAndRender();
+        }
+      } catch (e) { console.log('Sheets fetch error:', e); }
     }
-    function drawChart(id, data) {
+    function mergeAndRender() {
+      // Convert device history timestamps (seconds-since-boot) to unix epoch
+      let deviceData = hist.map(h => ({
+        t: bootEpoch > 0 ? bootEpoch + h.t : h.t,
+        l: h.l
+      }));
+      // Merge: Sheets data first, then device data, sorted by time, deduplicated
+      let all = [...sheetsHist, ...deviceData].sort((a, b) => a.t - b.t);
+      // Deduplicate: remove entries within 60s of each other (keep latest)
+      let deduped = [];
+      for (let i = 0; i < all.length; i++) {
+        if (deduped.length === 0 || all[i].t - deduped[deduped.length - 1].t >= 60) {
+          deduped.push(all[i]);
+        }
+      }
+      // Keep last 288 entries (24h)
+      if (deduped.length > 288) deduped = deduped.slice(-288);
+      drawChart('chart24', deduped, true);
+      drawRefillFromMerged(deduped);
+      updLFFromMerged(deduped);
+    }
+    async function fetchHist() {
+      try {
+        const r = await fetch('/api/history');
+        const d = await r.json();
+        hist = d.data || [];
+        mergeAndRender();
+      } catch (e) { }
+    }
+    function drawChart(id, data, useRealTime) {
       const el = document.getElementById(id);
       if (!data.length) { el.innerHTML = '<svg viewBox="0 0 500 160"><text class="chart-no-data" x="250" y="85">No data yet</text></svg>'; return; }
       const W = 500, H = 150, pad = 30, cW = W - pad * 2, cH = H - 20;
@@ -1368,8 +1422,13 @@
         const idxs = [0, Math.floor(data.length / 4), Math.floor(data.length / 2), Math.floor(3 * data.length / 4), data.length - 1];
         idxs.forEach(i => {
           if (i >= data.length) return;
-          const d = new Date(data[i].t * 1000);
-          const lbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+          // useRealTime: timestamps are already real Unix epochs (merged Sheets + device data)
+          // otherwise: timestamps are seconds-since-boot, need bootEpoch offset
+          const ts = useRealTime ? data[i].t : (bootEpoch + data[i].t);
+          const d = new Date(ts * 1000);
+          const lbl = (useRealTime || bootEpoch > 0)
+            ? d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0')
+            : '+' + Math.floor(data[i].t / 60) + 'm';
           svg += '<text x="' + pts[i].x + '" y="' + (H - 0) + '" class="chart-label" text-anchor="middle">' + lbl + '</text>';
         });
       }
@@ -1388,6 +1447,34 @@
       svg += '</svg>';
       el.innerHTML = svg;
     }
+    function drawRefillFromMerged(merged) {
+      if (!merged.length) { drawChart('chartRefill', [], true); return; }
+      let ri = 0;
+      for (let i = merged.length - 1; i > 0; i--) {
+        if (merged[i].l - merged[i - 1].l > 3) {
+          let s = i - 1;
+          while (s > 0 && merged[s].l - merged[s - 1].l > 0.5) s--;
+          ri = Math.max(0, s);
+          break;
+        }
+      }
+      drawChart('chartRefill', merged.slice(ri), true);
+    }
+    function updLFFromMerged(merged) {
+      let lf = null;
+      for (let i = merged.length - 1; i >= 0; i--) {
+        if (merged[i].l >= 95) {
+          lf = new Date(merged[i].t * 1000);
+          break;
+        }
+      }
+      const el = document.getElementById('lfTime'), ag = document.getElementById('lfAgo');
+      if (lf) {
+        el.textContent = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const m = Math.floor((Date.now() - lf.getTime()) / 60000);
+        ag.textContent = m < 1 ? 'Just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
+      } else { el.textContent = 'No data'; ag.textContent = ''; }
+    }
     function drawRefill() {
       if (!hist.length) { drawChart('chartRefill', []); return; }
       let ri = 0;
@@ -1398,13 +1485,19 @@
     }
     function updLF() {
       let lf = null;
-      for (let i = hist.length - 1; i >= 0; i--) { if (hist[i].l >= 95) { lf = new Date(hist[i].t * 1000); break; } }
+      for (let i = hist.length - 1; i >= 0; i--) {
+        if (hist[i].l >= 95) {
+          // hist[i].t is seconds-since-boot. Convert to real unix ms.
+          lf = new Date((bootEpoch + hist[i].t) * 1000);
+          break;
+        }
+      }
       const el = document.getElementById('lfTime'), ag = document.getElementById('lfAgo');
-      if (lf) {
+      if (lf && bootEpoch > 0) {
         el.textContent = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const m = Math.floor((Date.now() - lf.getTime()) / 60000);
-        ag.textContent = m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
-      } else { el.textContent = 'No data'; ag.textContent = ''; }
+        ag.textContent = m < 1 ? 'Just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
+      } else { el.textContent = 'No data'; ag.textContent = bootEpoch === 0 ? 'Waiting for sync...' : ''; }
     }
 
     // Config

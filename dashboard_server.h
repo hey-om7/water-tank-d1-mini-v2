@@ -96,6 +96,8 @@ inline void setupRoutes() {
     doc["uptime"] = millis() / 1000;
     doc["rssi"] = WiFi.RSSI();
     doc["name"] = config.name;
+    // nowEpoch: browser will sync its real clock to device uptime
+    doc["nowEpoch"] = (unsigned long)(millis() / 1000);
 
     String out;
     serializeJson(doc, out);
