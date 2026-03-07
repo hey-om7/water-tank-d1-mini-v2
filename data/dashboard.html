@@ -1584,15 +1584,15 @@
         '<div class="last-fill-ago">' + ago + '</div>' +
         '</div>' +
         // Graphical bar
-        '<div style="position:relative;height:28px;background:rgba(255,255,255,.04);border-radius:8px;overflow:hidden;margin:10px 0 8px">' +
+        '<div style="display:flex;align-items:center;gap:8px;margin:10px 0 8px">' +
+        '<div style="font-size:.7rem;font-weight:700;color:var(--text3);width:32px;text-align:right">' + from + '%</div>' +
+        '<div style="flex:1;position:relative;height:24px;background:rgba(255,255,255,.04);border-radius:12px;overflow:hidden">' +
         // From zone (dark)
-        '<div style="position:absolute;left:0;top:0;width:' + from + '%;height:100%;background:rgba(100,140,255,.1);border-radius:8px 0 0 8px"></div>' +
+        '<div style="position:absolute;left:0;top:0;width:' + from + '%;height:100%;background:rgba(100,140,255,.1)"></div>' +
         // Filled zone (gradient)
-        '<div style="position:absolute;left:' + from + '%;top:0;width:' + (to - from) + '%;height:100%;background:linear-gradient(90deg,var(--purple),var(--cyan));border-radius:4px;transition:width .5s"></div>' +
-        // From label
-        '<div style="position:absolute;left:' + Math.max(1, from - 1) + '%;top:50%;transform:translateY(-50%);font-size:.65rem;font-weight:700;color:var(--text3);padding:0 4px">' + from + '%</div>' +
-        // To label
-        '<div style="position:absolute;left:' + Math.min(92, to + 1) + '%;top:50%;transform:translateY(-50%);font-size:.65rem;font-weight:700;color:#fff;padding:0 4px">' + to + '%</div>' +
+        '<div style="position:absolute;left:' + from + '%;top:0;width:' + (to - from) + '%;height:100%;background:linear-gradient(90deg,var(--purple),var(--cyan));transition:width .5s"></div>' +
+        '</div>' +
+        '<div style="font-size:.7rem;font-weight:700;color:var(--cyan);width:32px;text-align:left">' + to + '%</div>' +
         '</div>' +
         // Stats row
         '<div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text3);margin-top:4px">' +
