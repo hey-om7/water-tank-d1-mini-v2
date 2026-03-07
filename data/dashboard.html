@@ -1077,8 +1077,8 @@
                 <rect x="16" y="10" width="148" height="240" rx="16" />
               </clipPath>
               <linearGradient id="wGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" id="wg1" stop-color="rgba(0,200,255,.6)" />
-                <stop offset="100%" id="wg2" stop-color="rgba(0,100,220,.35)" />
+                <stop offset="0%" id="wg1" stop-color="#1e81b0" />
+                <stop offset="100%" id="wg2" stop-color="#0b417a" />
               </linearGradient>
               <linearGradient id="tankBorder" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stop-color="rgba(100,160,255,.25)" />
@@ -1104,12 +1104,12 @@
               <rect id="wRect" x="16" y="250" width="148" height="0" fill="url(#wGrad)" />
               <g id="wavesG">
                 <svg id="wavePos" x="6" y="250" width="168" height="24" viewBox="0 0 200 24" preserveAspectRatio="none">
-                  <path class="wave-slow" d="M0,12 Q25,4 50,12 T100,12 T150,12 T200,12 L200,24 L0,24Z"
-                    fill="rgba(0,200,255,.3)" />
-                  <path class="wave-mid" d="M0,14 Q30,20 60,14 T120,14 T180,14 L200,24 L0,24Z"
-                    fill="rgba(0,140,255,.2)" />
-                  <path class="wave-fast" d="M0,16 Q20,10 40,16 T80,16 T120,16 T160,16 T200,16 L200,24 L0,24Z"
-                    fill="rgba(0,220,255,.15)" />
+                  <path class="wave-slow" id="wav1" d="M0,12 Q25,4 50,12 T100,12 T150,12 T200,12 L200,24 L0,24Z"
+                    fill="#1e81b0" />
+                  <path class="wave-mid" id="wav2" d="M0,14 Q30,20 60,14 T120,14 T180,14 L200,24 L0,24Z"
+                    fill="#1598ce" />
+                  <path class="wave-fast" id="wav3" d="M0,16 Q20,10 40,16 T80,16 T120,16 T160,16 T200,16 L200,24 L0,24Z"
+                    fill="#11b3eb" />
                 </svg>
               </g>
               <!-- Bubbles -->
@@ -1307,9 +1307,28 @@
       document.getElementById('tSub').textContent = targetPct >= 90 ? 'TANK FULL' : targetPct < 15 ? 'LOW LEVEL' : 'WATER LEVEL';
       // Gradient by level
       const g1 = document.getElementById('wg1'), g2 = document.getElementById('wg2');
-      if (targetPct < 20) { g1.setAttribute('stop-color', 'rgba(255,71,87,.6)'); g2.setAttribute('stop-color', 'rgba(200,40,50,.35)'); }
-      else if (targetPct < 45) { g1.setAttribute('stop-color', 'rgba(255,190,46,.6)'); g2.setAttribute('stop-color', 'rgba(200,120,0,.35)'); }
-      else { g1.setAttribute('stop-color', 'rgba(0,200,255,.6)'); g2.setAttribute('stop-color', 'rgba(0,100,220,.35)'); }
+      const w1 = document.getElementById('wav1'), w2 = document.getElementById('wav2'), w3 = document.getElementById('wav3');
+      if (targetPct < 20) {
+        g1.setAttribute('stop-color', 'rgba(255,71,87,.5)');
+        g2.setAttribute('stop-color', 'rgba(200,40,50,.25)');
+        w1.setAttribute('fill', 'rgba(255,71,87,.8)');
+        w2.setAttribute('fill', 'rgba(255,90,100,.6)');
+        w3.setAttribute('fill', 'rgba(255,50,70,.5)');
+      }
+      else if (targetPct < 45) {
+        g1.setAttribute('stop-color', 'rgba(255,190,46,.5)');
+        g2.setAttribute('stop-color', 'rgba(200,120,0,.25)');
+        w1.setAttribute('fill', 'rgba(255,190,46,.8)');
+        w2.setAttribute('fill', 'rgba(255,170,30,.6)');
+        w3.setAttribute('fill', 'rgba(255,210,60,.5)');
+      }
+      else {
+        g1.setAttribute('stop-color', 'rgba(0,200,255,.5)');
+        g2.setAttribute('stop-color', 'rgba(0,100,220,.25)');
+        w1.setAttribute('fill', 'rgba(0,200,255,.8)');
+        w2.setAttribute('fill', 'rgba(0,160,255,.6)');
+        w3.setAttribute('fill', 'rgba(0,220,255,.5)');
+      }
       // Water Duration Estimate
       updDuration(targetPct);
       // Meta
@@ -1355,8 +1374,12 @@
         // Apply to SVG
         const wH = (currentPct / 100) * H;
         const wY = 250 - wH;
+
+        // Remove offset so solid main body connects to the bottom of first wave layer
         const wr = document.getElementById('wRect');
-        wr.setAttribute('y', wY); wr.setAttribute('height', wH);
+        wr.setAttribute('y', wY);
+        wr.setAttribute('height', wH);
+
         document.getElementById('wavePos').setAttribute('y', wY - 12);
         document.getElementById('bubblesG').setAttribute('transform', 'translate(0,' + (wY - 20) + ')');
         // Continue animating if not at target
@@ -1374,40 +1397,57 @@
       const el = document.getElementById('durVal');
       const lbl = document.getElementById('durLabel');
       const sub = document.getElementById('durSub');
-      // Calculate from merged history (sheets + device)
+      // Gather all available history
       let allData = [...sheetsHist];
-      if (allData.length < 2) {
-        el.textContent = '—';
-        lbl.textContent = 'Not enough data';
-        sub.textContent = 'Need 24h of history';
-        return;
+      // Calculate data time span in hours
+      let dataHours = 0;
+      if (allData.length >= 2) {
+        dataHours = (allData[allData.length - 1].t - allData[0].t) / 3600;
       }
-      // Find consumption rate: average level drop per hour (ignoring refills)
-      let totalDrop = 0, totalHours = 0;
+
+      // Find consumption rate from drops only (ignore refills)
+      let totalDrop = 0, totalDropHours = 0;
       for (let i = 1; i < allData.length; i++) {
         const dLvl = allData[i - 1].l - allData[i].l;
-        const dTime = (allData[i].t - allData[i - 1].t) / 3600; // hours
-        if (dLvl > 0 && dTime > 0 && dTime < 2) { // Only count drops, skip refills
+        const dTime = (allData[i].t - allData[i - 1].t) / 3600;
+        if (dLvl > 0 && dTime > 0 && dTime < 2) {
           totalDrop += dLvl;
-          totalHours += dTime;
+          totalDropHours += dTime;
         }
       }
-      if (totalHours < 0.5) {
-        el.textContent = '—';
-        lbl.textContent = 'Low usage detected';
-        sub.textContent = 'Not enough consumption data';
-        return;
-      }
-      const dropPerHour = totalDrop / totalHours;
+
+      // Use measured rate if available, otherwise fallback to 1%/hr
+      let dropPerHour = totalDropHours > 0.1 ? totalDrop / totalDropHours : 1.0;
       const hoursLeft = p / dropPerHour;
-      if (hoursLeft > 48) {
-        el.textContent = Math.round(hoursLeft / 24) + 'd';
-        lbl.textContent = 'Estimated remaining';
+
+      // Format duration
+      if (hoursLeft >= 48) {
+        const days = Math.floor(hoursLeft / 24);
+        const hrs = Math.round(hoursLeft % 24);
+        el.textContent = '\u2248 ' + days + ' days ' + hrs + ' hours';
       } else {
-        el.textContent = Math.round(hoursLeft) + 'h';
-        lbl.textContent = 'Estimated remaining';
+        const hrs = Math.floor(hoursLeft);
+        const mins = Math.round((hoursLeft - hrs) * 60);
+        if (hrs > 0) {
+          el.textContent = '\u2248 ' + hrs + ' hours ' + mins + ' min';
+        } else {
+          el.textContent = '\u2248 ' + mins + ' min';
+        }
       }
-      sub.textContent = 'Using ' + dropPerHour.toFixed(1) + '%/hr avg';
+      lbl.textContent = 'Estimated remaining';
+
+      // Show warning if less than 24h of data
+      if (dataHours < 24) {
+        sub.innerHTML = '<span style="color:var(--yellow)">\u26A0 Prediction based on limited data.</span><br>For more accurate results, allow at least 24 hours of usage data collection.';
+        sub.style.opacity = '1';
+        sub.style.marginTop = '12px';
+        sub.style.lineHeight = '1.4';
+      } else {
+        sub.textContent = 'Using ' + dropPerHour.toFixed(1) + '%/hr avg';
+        sub.style.color = 'var(--text3)';
+        sub.style.opacity = '.7';
+        sub.style.marginTop = '8px';
+      }
     }
     function fmtUp(s) { if (s < 60) return s + 's'; if (s < 3600) return Math.floor(s / 60) + 'm'; if (s < 86400) return Math.floor(s / 3600) + 'h ' + Math.floor((s % 3600) / 60) + 'm'; return Math.floor(s / 86400) + 'd ' + Math.floor((s % 86400) / 3600) + 'h' }
     function fmtEta(m) { if (m < 1) return '< 1 min'; if (m < 60) return Math.round(m) + ' min'; return Math.floor(m / 60) + 'h ' + Math.round(m % 60) + 'm' }
