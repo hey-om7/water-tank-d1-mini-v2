@@ -11,8 +11,8 @@
 #include <ESP8266WebServer.h>
 
 // ─── Pin Definitions ──────────────────────────────────────────
-#define TRIGGER_PIN D1 // GPIO12
-#define ECHO_PIN D2    // GPIO13
+#define TRIGGER_PIN D1 // GPIO5
+#define ECHO_PIN D2    // GPIO4
 
 // ─── EEPROM Constants ─────────────────────────────────────────
 #define EEPROM_SIZE 512
@@ -37,11 +37,17 @@
 #define MDNS_NAME "watertank"
 
 // ─── Sensor Constants ────────────────────────────────────────
-#define SENSOR_SAMPLES 5     // Number of readings to average
-#define SENSOR_INTERVAL 2000 // Read sensor every 2s
+#define SENSOR_SAMPLES 7          // Odd number for median filter
+#define SENSOR_READ_INTERVAL 2000 // Internal fast read every 2s
+#define SENSOR_INTERVAL 30000     // Publish filtered value every 30s
+
+// ─── Sensor Filtering Constants ──────────────────────────────
+#define SPIKE_THRESHOLD 5.0   // Max allowed jump (cm) from last valid
+#define EMA_ALPHA 0.3         // Exponential moving average factor (0-1)
+#define FILTER_BUFFER_SIZE 15 // Internal buffer for 30s of 2s reads
 
 // ─── Fill Detection Constants ────────────────────────────────
-#define FILL_WINDOW 10     // 2 min window (24 * 5s readings)
+#define FILL_WINDOW 10     // Lookback window (readings)
 #define FILL_THRESHOLD 3.0 // >3% rise in window = filling
 
 // ─── Logging & History ───────────────────────────────────────
@@ -83,6 +89,14 @@ extern bool apMode;
 extern float currentDistance;
 extern float currentLevel;
 extern unsigned long lastSensorRead;
+
+// Sensor filter state
+extern float filterBuffer[];
+extern int filterBufIdx;
+extern int filterBufCount;
+extern float lastValidDistance;
+extern float emaDistance;
+extern unsigned long lastInternalRead;
 
 // Fill detection state
 extern float levelHistory[FILL_WINDOW];

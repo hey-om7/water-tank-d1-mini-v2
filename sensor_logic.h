@@ -1,8 +1,12 @@
 /*
  * sensor_logic.h — Ultrasonic Sensor & Fill Detection
  * =====================================================
- * JSN-SR04T ultrasonic distance sensor reading with multi-sample
- * averaging, distance-to-level conversion, and fill event detection.
+ * JSN-SR04T ultrasonic distance sensor with robust 3-stage filtering:
+ *  1. Median filter (7 samples) — removes spike outliers
+ *  2. Spike rejection — ignores readings >5cm from last valid
+ *  3. EMA smoothing — gradual transitions, no jumps
+ *
+ * Fast internal reads every 2s → published stable value every 30s.
  */
 
 #ifndef SENSOR_LOGIC_H
@@ -25,10 +29,36 @@ inline void initFillDetection() {
   Serial.println("[SENSOR] Fill detection initialized");
 }
 
-// ─── Read Distance (Multi-Sample Average) ────────────────────
-inline float readDistance() {
-  float total = 0;
-  int valid = 0;
+// ─── Initialize Filter State ────────────────────────────────
+inline void initFilter() {
+  for (int i = 0; i < FILTER_BUFFER_SIZE; i++)
+    filterBuffer[i] = 0;
+  filterBufIdx = 0;
+  filterBufCount = 0;
+  lastValidDistance = -1;
+  emaDistance = -1;
+  Serial.println("[SENSOR] Filter initialized");
+}
+
+// ─── Bubble Sort (for median) ────────────────────────────────
+inline void sortArray(float arr[], int n) {
+  for (int i = 0; i < n - 1; i++) {
+    for (int j = 0; j < n - i - 1; j++) {
+      if (arr[j] > arr[j + 1]) {
+        float tmp = arr[j];
+        arr[j] = arr[j + 1];
+        arr[j + 1] = tmp;
+      }
+    }
+  }
+}
+
+// ─── Read Raw Distance (Single Burst, Median of 7) ──────────
+// Takes 7 samples, sorts them, returns the median.
+// This removes extreme spikes at the hardware level.
+inline float readRawDistance() {
+  float samples[SENSOR_SAMPLES];
+  int validCount = 0;
 
   for (int i = 0; i < SENSOR_SAMPLES; i++) {
     // Trigger pulse
@@ -39,21 +69,84 @@ inline float readDistance() {
     digitalWrite(TRIGGER_PIN, LOW);
 
     // Read echo
-    long duration = pulseIn(ECHO_PIN, HIGH, 50000); // 50ms timeout (~8.5m)
+    long duration = pulseIn(ECHO_PIN, HIGH, 50000); // 50ms timeout
 
     if (duration > 0) {
       float dist = (duration * 0.0343) / 2.0; // Speed of sound = 343 m/s
       if (dist > 2 && dist < 500) {           // Valid range: 2-500cm
-        total += dist;
-        valid++;
+        samples[validCount++] = dist;
       }
     }
     delay(30); // JSN-SR04T needs ~30ms between readings
   }
 
-  return valid > 0 ? total / valid
-                   : currentDistance; // Keep last reading if no valid
+  if (validCount == 0) {
+    return -1; // No valid readings
+  }
+
+  // Sort and return median
+  sortArray(samples, validCount);
+  return samples[validCount / 2];
 }
+
+// ─── Stage 2: Spike Rejection ────────────────────────────────
+// Reject readings that jump >SPIKE_THRESHOLD from last valid.
+inline float rejectSpike(float rawDist) {
+  if (rawDist < 0)
+    return -1; // Invalid reading
+
+  // First valid reading ever — accept it
+  if (lastValidDistance < 0) {
+    lastValidDistance = rawDist;
+    return rawDist;
+  }
+
+  float diff = abs(rawDist - lastValidDistance);
+  if (diff > SPIKE_THRESHOLD) {
+    // Spike detected — reject and return last valid
+    Serial.printf("[SENSOR] Spike rejected: %.1f cm (diff=%.1f from %.1f)\n",
+                  rawDist, diff, lastValidDistance);
+    return -1; // Signal bad reading
+  }
+
+  // Good reading
+  lastValidDistance = rawDist;
+  return rawDist;
+}
+
+// ─── Stage 3: EMA Smoothing ─────────────────────────────────
+// Exponential Moving Average: smoothed = α·new + (1-α)·old
+inline float applyEMA(float distance) {
+  if (distance < 0)
+    return emaDistance; // Keep previous on bad reading
+
+  if (emaDistance < 0) {
+    emaDistance = distance; // First reading
+    return distance;
+  }
+
+  emaDistance = EMA_ALPHA * distance + (1.0 - EMA_ALPHA) * emaDistance;
+  return emaDistance;
+}
+
+// ─── Internal Fast Read (called every 2s) ────────────────────
+// Reads sensor, filters through spike rejection, stores in buffer.
+inline void internalSensorRead() {
+  float raw = readRawDistance();
+  float cleaned = rejectSpike(raw);
+  float smoothed = applyEMA(cleaned);
+
+  if (smoothed > 0) {
+    filterBuffer[filterBufIdx] = smoothed;
+    filterBufIdx = (filterBufIdx + 1) % FILTER_BUFFER_SIZE;
+    if (filterBufCount < FILTER_BUFFER_SIZE)
+      filterBufCount++;
+  }
+
+  Serial.printf("[SENSOR] Raw:%.1f Cleaned:%.1f EMA:%.1f\n", raw, cleaned,
+                smoothed);
+}
+
 
 // ─── Calculate Water Level Percentage ────────────────────────
 inline float calculateLevel(float distance) {
@@ -70,6 +163,29 @@ inline float calculateLevel(float distance) {
     level = 100;
   return level;
 }
+
+// ─── Publish Stable Reading (called every 30s) ──────────────
+// Averages the filter buffer to produce the final stable value.
+inline void publishStableReading() {
+  if (filterBufCount == 0) {
+    Serial.println("[SENSOR] No valid data to publish");
+    return;
+  }
+
+  // Average all values in the buffer
+  float sum = 0;
+  for (int i = 0; i < filterBufCount; i++) {
+    sum += filterBuffer[i];
+  }
+
+  currentDistance = sum / filterBufCount;
+  currentLevel = calculateLevel(currentDistance);
+
+  Serial.printf(
+      "[SENSOR] ─── Published: %.1f cm | %.1f%% (from %d samples) ───\n",
+      currentDistance, currentLevel, filterBufCount);
+}
+
 
 // ─── Update Fill Detection ───────────────────────────────────
 inline void updateFillDetection() {

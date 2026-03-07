@@ -188,6 +188,15 @@ inline void setupRoutes() {
     factoryReset();
   });
 
+  // API: Remote restart
+  server.on("/api/restart", HTTP_GET, []() {
+    server.send(200, "application/json",
+                "{\"ok\":true,\"msg\":\"Restarting...\"}");
+    Serial.println("[SERVER] Restart requested via API");
+    delay(500);
+    ESP.restart();
+  });
+
   // 404 handler — serve dashboard for any unknown route
   server.onNotFound([]() {
     server.sendHeader("Content-Encoding", "gzip");
