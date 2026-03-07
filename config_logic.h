@@ -47,6 +47,14 @@ inline void loadConfig() {
     config.name[i] = EEPROM.read(357 + i);
   config.name[32] = '\0';
 
+  // Read tank girth (circumference in cm)
+  config.tankGirth = EEPROM.read(421) | (EEPROM.read(422) << 8);
+
+  // Read tank count
+  config.tankCount = EEPROM.read(423);
+  if (config.tankCount == 0 || config.tankCount == 255)
+    config.tankCount = 1;
+
   // Validate
   if (config.tankEmpty == 0)
     config.tankEmpty = 200;
@@ -55,8 +63,10 @@ inline void loadConfig() {
   if (strlen(config.name) == 0)
     strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
 
-  Serial.printf("[CONFIG] Loaded: SSID=%s, Empty=%dcm, Full=%dcm\n",
-                config.ssid, config.tankEmpty, config.tankFull);
+  Serial.printf(
+      "[CONFIG] Loaded: SSID=%s, Empty=%dcm, Full=%dcm, Girth=%dcm, Tanks=%d\n",
+      config.ssid, config.tankEmpty, config.tankFull, config.tankGirth,
+      config.tankCount);
 }
 
 // ─── Save Config to EEPROM ───────────────────────────────────
@@ -77,6 +87,13 @@ inline void saveConfigToEEPROM() {
     EEPROM.write(101 + i, config.webhook[i]);
   for (int i = 0; i < 32; i++)
     EEPROM.write(357 + i, config.name[i]);
+
+  // Tank girth
+  EEPROM.write(421, config.tankGirth & 0xFF);
+  EEPROM.write(422, (config.tankGirth >> 8) & 0xFF);
+
+  // Tank count
+  EEPROM.write(423, config.tankCount);
 
   EEPROM.commit();
   Serial.println("[CONFIG] Saved to EEPROM");

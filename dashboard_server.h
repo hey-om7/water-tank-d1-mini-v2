@@ -92,6 +92,7 @@ inline void setupRoutes() {
     doc["filling"] = isFilling;
     doc["fillRate"] = round(fillRate * 100) / 100.0;
     doc["eta"] = round(fillEta * 10) / 10.0;
+    doc["liters"] = round(currentLiters * 10) / 10.0;
     doc["uptime"] = millis() / 1000;
     doc["rssi"] = WiFi.RSSI();
     doc["name"] = config.name;
@@ -129,6 +130,8 @@ inline void setupRoutes() {
     doc["tankMax"] = config.tankFull;
     doc["webhook"] = config.webhook;
     doc["name"] = config.name;
+    doc["tankGirth"] = config.tankGirth;
+    doc["tankCount"] = config.tankCount;
 
     String out;
     serializeJson(doc, out);
@@ -173,6 +176,17 @@ inline void setupRoutes() {
     // Update name
     if (doc.containsKey("name")) {
       strncpy(config.name, doc["name"], sizeof(config.name) - 1);
+    }
+
+    // Update tank girth
+    if (doc.containsKey("tankGirth"))
+      config.tankGirth = doc["tankGirth"];
+
+    // Update tank count
+    if (doc.containsKey("tankCount")) {
+      config.tankCount = doc["tankCount"];
+      if (config.tankCount == 0)
+        config.tankCount = 1;
     }
 
     saveConfigToEEPROM();

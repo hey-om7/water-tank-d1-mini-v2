@@ -1182,11 +1182,11 @@
         </div>
       </div>
       <div class="card stat-card">
-        <div class="stat-icon cyan">💧</div>
-        <div class="stat-val" id="sLvl">--<span class="stat-unit">%</span></div>
-        <div class="stat-lbl">Water Level</div>
+        <div class="stat-icon cyan">🪣</div>
+        <div class="stat-val" id="sLiters">--<span class="stat-unit">L</span></div>
+        <div class="stat-lbl">Water Remaining</div>
         <div class="stat-bar">
-          <div class="stat-bar-fill" id="sLvlBar" style="width:0;background:var(--cyan)"></div>
+          <div class="stat-bar-fill" id="sLitersBar" style="width:0;background:var(--cyan)"></div>
         </div>
       </div>
       <div class="card stat-card">
@@ -1238,8 +1238,14 @@
           <div class="form-group"><label>Full Distance (cm)</label><input type="number" id="cfgMax"
               placeholder="e.g. 20"></div>
         </div>
+        <div class="form-row">
+          <div class="form-group"><label>Tank Girth / Circumference (cm)</label><input type="number" id="cfgGirth"
+              placeholder="e.g. 400"></div>
+          <div class="form-group"><label>Number of Tanks</label><input type="number" id="cfgTankCount" min="1"
+              placeholder="e.g. 1"></div>
+        </div>
         <div style="font-size:.62rem;color:var(--text3);margin-top:-6px">Empty = sensor→water when empty · Full = when
-          full</div>
+          full · Girth = outer circumference of tank</div>
       </div>
       <div class="card" style="margin-bottom:12px">
         <div class="card-hdr"><i style="background:rgba(168,85,247,.12);color:var(--purple)">⊘</i>Google Sheets</div>
@@ -1337,13 +1343,15 @@
       document.getElementById('tMeta').textContent = (d.distance || 0).toFixed(1) + ' cm from sensor';
       document.getElementById('tMeta2').textContent = 'Updated every 30 seconds';
       // Stats
-      document.getElementById('sDist').innerHTML = (d.distance || 0).toFixed(1) + '<span class="stat-unit">cm</span>';
-      document.getElementById('sLvl').innerHTML = targetPct + '<span class="stat-unit">%</span>';
+      document.getElementById('sDist').innerHTML = (d.distance || 0) + '<span class="stat-unit">cm</span>';
+      document.getElementById('sDistBar').style.width = Math.min(100, (d.distance || 0) / 3) + '%';
+      // Water Remaining (liters)
+      const liters = d.liters || 0;
+      document.getElementById('sLiters').innerHTML = liters + '<span class="stat-unit">L</span>';
+      document.getElementById('sLitersBar').style.width = targetPct + '%';
       document.getElementById('sUp').textContent = fmtUp(d.uptime || 0);
       document.getElementById('sRssi').innerHTML = (d.rssi || 0) + '<span class="stat-unit">dBm</span>';
       // Stat bars
-      document.getElementById('sDistBar').style.width = Math.min(100, ((d.distance || 0) / 300) * 100) + '%';
-      document.getElementById('sLvlBar').style.width = targetPct + '%';
       const sig = Math.min(100, Math.max(0, (100 + ((d.rssi || 0)))));
       document.getElementById('sRssiBar').style.width = sig + '%';
       // Fill
@@ -1633,6 +1641,8 @@
         document.getElementById('cfgMin').value = d.tankMin || '';
         document.getElementById('cfgMax').value = d.tankMax || '';
         document.getElementById('cfgHook').value = d.webhook || '';
+        document.getElementById('cfgGirth').value = d.tankGirth || '';
+        document.getElementById('cfgTankCount').value = d.tankCount || 1;
       } catch (e) { }
     }
     function toggleCfg() { document.getElementById('cfgPanel').classList.toggle('open') }
@@ -1641,7 +1651,9 @@
         ssid: document.getElementById('cfgSsid').value, pass: document.getElementById('cfgPass').value,
         tankMin: parseInt(document.getElementById('cfgMin').value) || 200,
         tankMax: parseInt(document.getElementById('cfgMax').value) || 20,
-        webhook: document.getElementById('cfgHook').value
+        webhook: document.getElementById('cfgHook').value,
+        tankGirth: parseInt(document.getElementById('cfgGirth').value) || 0,
+        tankCount: parseInt(document.getElementById('cfgTankCount').value) || 1
       };
       try {
         const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) });

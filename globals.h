@@ -27,6 +27,8 @@
 // Byte 101-356: Webhook URL (256 bytes)
 // Byte 357-388: Device name (32 bytes)
 // Byte 389-420: Firmware version string (32 bytes)
+// Byte 421-422: Tank girth/circumference (cm) [uint16]
+// Byte 423:     Number of tanks [uint8]
 #define EEPROM_FIRMWARE_VERSION_OFFSET 389
 #define EEPROM_FIRMWARE_VERSION_SIZE 32
 
@@ -71,6 +73,8 @@ struct Config {
   uint16_t tankFull;  // Distance when tank is full (sensor to water surface)
   char webhook[257];
   char name[33];
+  uint16_t tankGirth; // Tank circumference in cm
+  uint8_t tankCount;  // Number of connected tanks
 };
 
 // ─── History Entry ───────────────────────────────────────────
@@ -88,6 +92,7 @@ extern bool apMode;
 // Sensor state
 extern float currentDistance;
 extern float currentLevel;
+extern float currentLiters;
 extern unsigned long lastSensorRead;
 
 // Sensor filter state

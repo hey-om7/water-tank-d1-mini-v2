@@ -147,7 +147,6 @@ inline void internalSensorRead() {
                 smoothed);
 }
 
-
 // ─── Calculate Water Level Percentage ────────────────────────
 inline float calculateLevel(float distance) {
   if (config.tankEmpty <= config.tankFull)
@@ -162,6 +161,30 @@ inline float calculateLevel(float distance) {
   if (level > 100)
     level = 100;
   return level;
+}
+
+// ─── Calculate Water Volume in Liters ────────────────────────
+// Uses tank girth (circumference) to compute cylindrical volume.
+// radius = girth / (2π), area = πr², volume = area × waterHeight
+// liters = volume / 1000, total = liters × tankCount
+inline float calculateLiters(float distance) {
+  if (config.tankGirth == 0 || config.tankGirth == 0xFFFF)
+    return 0; // Not configured
+
+  float waterHeight = (float)config.tankEmpty - distance;
+  if (waterHeight < 0)
+    waterHeight = 0;
+
+  float radius = (float)config.tankGirth / (2.0 * 3.14159265);
+  float area = 3.14159265 * radius * radius; // cm²
+  float volumeCm3 = area * waterHeight;      // cm³
+  float liters = volumeCm3 / 1000.0;
+
+  uint8_t count = config.tankCount;
+  if (count == 0)
+    count = 1;
+
+  return liters * count;
 }
 
 // ─── Publish Stable Reading (called every 30s) ──────────────
@@ -180,12 +203,12 @@ inline void publishStableReading() {
 
   currentDistance = sum / filterBufCount;
   currentLevel = calculateLevel(currentDistance);
+  currentLiters = calculateLiters(currentDistance);
 
-  Serial.printf(
-      "[SENSOR] ─── Published: %.1f cm | %.1f%% (from %d samples) ───\n",
-      currentDistance, currentLevel, filterBufCount);
+  Serial.printf("[SENSOR] ─── Published: %.1f cm | %.1f%% | %.1f L (from %d "
+                "samples) ───\n",
+                currentDistance, currentLevel, currentLiters, filterBufCount);
 }
-
 
 // ─── Update Fill Detection ───────────────────────────────────
 inline void updateFillDetection() {

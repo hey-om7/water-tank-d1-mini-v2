@@ -49,7 +49,8 @@ bool apMode = false;
 
 // Sensor state
 float currentDistance = 0;
-float currentLevel = 0; // 0-100%
+float currentLevel = 0;  // 0-100%
+float currentLiters = 0; // Total liters remaining
 unsigned long lastSensorRead = 0;
 
 // Sensor filter state
