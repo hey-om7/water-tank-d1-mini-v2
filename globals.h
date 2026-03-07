@@ -11,8 +11,8 @@
 #include <ESP8266WebServer.h>
 
 // ─── Pin Definitions ──────────────────────────────────────────
-#define TRIGGER_PIN D6 // GPIO12
-#define ECHO_PIN D7    // GPIO13
+#define TRIGGER_PIN D1 // GPIO12
+#define ECHO_PIN D2    // GPIO13
 
 // ─── EEPROM Constants ─────────────────────────────────────────
 #define EEPROM_SIZE 512
@@ -41,7 +41,7 @@
 #define SENSOR_INTERVAL 2000 // Read sensor every 2s
 
 // ─── Fill Detection Constants ────────────────────────────────
-#define FILL_WINDOW 24     // 2 min window (24 * 5s readings)
+#define FILL_WINDOW 10     // 2 min window (24 * 5s readings)
 #define FILL_THRESHOLD 3.0 // >3% rise in window = filling
 
 // ─── Logging & History ───────────────────────────────────────
