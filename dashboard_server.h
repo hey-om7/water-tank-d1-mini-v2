@@ -51,20 +51,28 @@ inline void logToGoogleSheets() {
     String payload;
     serializeJson(doc, payload);
 
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+
     int code = http.POST(payload);
     Serial.printf("[SERVER] Sheets response: %d\n", code);
 
-    // Handle redirect (Google Apps Script redirects)
-    if (code == HTTP_CODE_MOVED_PERMANENTLY || code == HTTP_CODE_FOUND) {
-      String redirectUrl = http.getLocation();
-      http.end();
-      if (http.begin(*client, redirectUrl)) {
-        http.addHeader("Content-Type", "application/json");
-        code = http.POST(payload);
-        Serial.printf("[SERVER] Sheets redirect response: %d\n", code);
+    if (code > 0) {
+      if (code == HTTP_CODE_OK || code == HTTP_CODE_FOUND ||
+          code == HTTP_CODE_MOVED_PERMANENTLY) {
+        Serial.println("[SERVER] Successfully logged to Sheets!");
+      } else {
+        Serial.printf("[SERVER] Warning: Sheets returned HTTP %d\n", code);
+        String response = http.getString();
+        Serial.printf("[SERVER] Response body: %s\n", response.c_str());
       }
+    } else {
+      Serial.printf("[SERVER] HTTP Request failed, error: %s\n",
+                    http.errorToString(code).c_str());
     }
+
     http.end();
+  } else {
+    Serial.println("[SERVER] Unable to connect to webhook URL.");
   }
 }
 
