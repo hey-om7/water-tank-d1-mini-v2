@@ -155,10 +155,22 @@ function doGet(e) {
       var startEpoch = (startTs instanceof Date) ? Math.floor(startTs.getTime() / 1000) : Math.floor(startTs);
       var durationMin = Math.round((endEpoch - startEpoch) / 60);
 
-      // If the row just before the fill session exists, use its level as the true "from"
+      // Include the row just before the fill session for context (the "from" level)
+      var dataStartIdx = startIdx > 0 ? startIdx - 1 : startIdx;
       if (startIdx > 0) {
         var preLevel = parseFloat(scanValues[startIdx - 1][1]) || 0;
         fromLevel = preLevel;
+      }
+
+      // Build refillData: the actual data points for the fill window
+      var refillData = [];
+      for (var r = dataStartIdx; r <= endIdx; r++) {
+        var rTs = scanValues[r][0];
+        var rEpoch = (rTs instanceof Date) ? Math.floor(rTs.getTime() / 1000) : Math.floor(rTs);
+        var rLvl = parseFloat(scanValues[r][1]) || 0;
+        if (rEpoch > 0) {
+          refillData.push({ t: rEpoch, l: rLvl });
+        }
       }
 
       lastFilled = {
@@ -166,7 +178,8 @@ function doGet(e) {
         endTime: endEpoch,
         fromLevel: Math.round(fromLevel),
         toLevel: Math.round(toLevel),
-        durationMin: Math.max(1, durationMin) // At least 1 min
+        durationMin: Math.max(1, durationMin), // At least 1 min
+        refillData: refillData
       };
     }
 

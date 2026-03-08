@@ -1561,6 +1561,10 @@
         }
         // Update Last Filled from server-side scan
         updLFFromSheets(d.lastFilled || null);
+        // Store refill data points for the chart
+        if (d.lastFilled && d.lastFilled.refillData && d.lastFilled.refillData.length > 0) {
+          drawRefillChart(d.lastFilled.refillData);
+        }
       } catch (e) { console.log('Sheets fetch error:', e); }
     }
     function mergeAndRender() {
@@ -1581,7 +1585,6 @@
       // Keep last 288 entries (24h)
       if (deduped.length > 288) deduped = deduped.slice(-288);
       drawChart('chart24', deduped, true);
-      drawRefillFromMerged(deduped);
     }
     async function fetchHist() {
       try {
@@ -1639,18 +1642,77 @@
       svg += '</svg>';
       el.innerHTML = svg;
     }
-    function drawRefillFromMerged(merged) {
-      if (!merged.length) { drawChart('chartRefill', [], true); return; }
-      let ri = 0;
-      for (let i = merged.length - 1; i > 0; i--) {
-        if (merged[i].l - merged[i - 1].l > 3) {
-          let s = i - 1;
-          while (s > 0 && merged[s].l - merged[s - 1].l > 0.5) s--;
-          ri = Math.max(0, s);
-          break;
-        }
+    function drawRefillChart(data) {
+      const el = document.getElementById('chartRefill');
+      if (!data || !data.length) {
+        el.innerHTML = '<svg viewBox="0 0 500 160"><text class="chart-no-data" x="250" y="85">No refill data</text></svg>';
+        return;
       }
-      drawChart('chartRefill', merged.slice(ri), true);
+      const W = 500, H = 150, pad = 30, cW = W - pad * 2, cH = H - 20;
+      // Y axis: scale from slightly below min to slightly above max for a nice view
+      const levels = data.map(d => d.l);
+      const rawMin = Math.min(...levels);
+      const rawMax = Math.max(...levels);
+      const yPad = Math.max(5, (rawMax - rawMin) * 0.15);
+      const mn = Math.max(0, Math.floor(rawMin - yPad));
+      const mx = Math.min(100, Math.ceil(rawMax + yPad));
+      const yRange = mx - mn || 1;
+
+      let pts = data.map((d, i) => {
+        const x = pad + (i / (data.length - 1 || 1)) * cW;
+        const y = H - 10 - ((d.l - mn) / yRange) * cH;
+        return { x, y, l: d.l, t: d.t };
+      });
+
+      let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+      // Green gradient for refill
+      svg += '<defs><linearGradient id="refillGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(0,232,135,.45)"/><stop offset="100%" stop-color="rgba(0,232,135,0)"/></linearGradient></defs>';
+
+      // Grid lines
+      for (let i = 0; i <= 4; i++) {
+        const y = H - 10 - (i / 4) * cH;
+        const lbl = Math.round(mn + (i / 4) * yRange);
+        svg += '<line x1="' + pad + '" y1="' + y + '" x2="' + (W - pad) + '" y2="' + y + '" class="chart-grid-line"/>';
+        svg += '<text x="' + (pad - 4) + '" y="' + (y + 3) + '" class="chart-label" text-anchor="end">' + lbl + '%</text>';
+      }
+
+      // Time labels
+      if (data.length > 1) {
+        const idxs = [0, data.length - 1];
+        if (data.length > 4) {
+          idxs.splice(1, 0, Math.floor(data.length / 2));
+        }
+        idxs.forEach(i => {
+          if (i >= data.length) return;
+          const d = new Date(data[i].t * 1000);
+          const lbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+          svg += '<text x="' + pts[i].x + '" y="' + (H - 0) + '" class="chart-label" text-anchor="middle">' + lbl + '</text>';
+        });
+      }
+
+      // Area fill (green)
+      let area = 'M' + pts[0].x + ',' + pts[0].y;
+      pts.forEach((p, i) => { if (i > 0) area += ' L' + p.x + ',' + p.y; });
+      area += ' L' + pts[pts.length - 1].x + ',' + (H - 10) + ' L' + pts[0].x + ',' + (H - 10) + ' Z';
+      svg += '<path d="' + area + '" fill="url(#refillGrad)"/>';
+
+      // Line (green)
+      let line = 'M' + pts[0].x + ',' + pts[0].y;
+      pts.forEach((p, i) => { if (i > 0) line += ' L' + p.x + ',' + p.y; });
+      svg += '<path d="' + line + '" fill="none" stroke="var(--green, #00e887)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+
+      // Start and end dots
+      const fp = pts[0];
+      const lp = pts[pts.length - 1];
+      svg += '<circle cx="' + fp.x + '" cy="' + fp.y + '" r="3" fill="var(--text3)" stroke="var(--surface)" stroke-width="1"/>';
+      svg += '<circle cx="' + lp.x + '" cy="' + lp.y + '" r="4" fill="var(--green, #00e887)" stroke="var(--surface)" stroke-width="1.5"/>';
+
+      // Start and end level labels
+      svg += '<text x="' + (fp.x + 6) + '" y="' + (fp.y - 6) + '" class="chart-label" fill="var(--text3)">' + Math.round(fp.l) + '%</text>';
+      svg += '<text x="' + (lp.x - 6) + '" y="' + (lp.y - 6) + '" class="chart-label" text-anchor="end" fill="var(--green, #00e887)">' + Math.round(lp.l) + '%</text>';
+
+      svg += '</svg>';
+      el.innerHTML = svg;
     }
     function updLFFromSheets(session) {
       const box = document.getElementById('lfContent');
