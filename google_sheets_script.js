@@ -41,11 +41,17 @@ function doPost(e) {
     // Append data row
     sheet.appendRow([
       new Date(),
-      data.level || 0,
-      data.distance || 0,
+      Number(data.level) || 0,
+      Number(data.distance) || 0,
       data.filling ? "Yes" : "No",
-      data.fillRate || 0
+      Number(data.fillRate) || 0
     ]);
+
+    // Force numeric format to correctly display data
+    var lastRow = sheet.getLastRow();
+    sheet.getRange(lastRow, 2).setNumberFormat("0.0");   // Water Level (%)
+    sheet.getRange(lastRow, 3).setNumberFormat("0.0");   // Distance (cm)
+    sheet.getRange(lastRow, 5).setNumberFormat("0.00");  // Fill Rate (%/min)
 
     return ContentService
       .createTextOutput(JSON.stringify({ status: "ok" }))
