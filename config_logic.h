@@ -9,6 +9,7 @@
 #define CONFIG_LOGIC_H
 
 #include "globals.h"
+#include "customHttpLogging.h"
 #include <EEPROM.h>
 
 // ─── Load Config from EEPROM ─────────────────────────────────
@@ -16,7 +17,7 @@ inline void loadConfig() {
   memset(&config, 0, sizeof(config));
 
   if (EEPROM.read(0) != EEPROM_MAGIC) {
-    Serial.println("[CONFIG] No saved config found");
+    printLog("[CONFIG] No saved config found");
     config.tankEmpty = 200; // Default: 200cm when empty
     config.tankFull = 20;   // Default: 20cm when full
     strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
@@ -63,7 +64,7 @@ inline void loadConfig() {
   if (strlen(config.name) == 0)
     strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
 
-  Serial.printf(
+  printLog(
       "[CONFIG] Loaded: SSID=%s, Empty=%dcm, Full=%dcm, Girth=%dcm, Tanks=%d\n",
       config.ssid, config.tankEmpty, config.tankFull, config.tankGirth,
       config.tankCount);
@@ -96,12 +97,12 @@ inline void saveConfigToEEPROM() {
   EEPROM.write(423, config.tankCount);
 
   EEPROM.commit();
-  Serial.println("[CONFIG] Saved to EEPROM");
+  printLog("[CONFIG] Saved to EEPROM");
 }
 
 // ─── Factory Reset ───────────────────────────────────────────
 inline void factoryReset() {
-  Serial.println("[CONFIG] === FACTORY RESET ===");
+  printLog("[CONFIG] === FACTORY RESET ===");
   for (int i = 0; i < EEPROM_SIZE; i++)
     EEPROM.write(i, 0);
   EEPROM.commit();

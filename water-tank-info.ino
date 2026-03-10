@@ -37,10 +37,10 @@
 #include "config_logic.h"
 #include "dashboard_server.h"
 #include "globals.h"
+#include "customHttpLogging.h"
 #include "ota_update_logic.h"
 #include "sensor_logic.h"
 #include "wifi_logic.h"
-
 // ─── Global Variable Definitions ─────────────────────────────
 // (Declared as extern in globals.h)
 ESP8266WebServer server(80);
@@ -84,9 +84,9 @@ void setup() {
   Serial.begin(115200);
   delay(100);
 
-  Serial.println("\n\n══════════════════════════════════════");
-  Serial.println("  Water Tank Monitor — Starting Up");
-  Serial.println("══════════════════════════════════════");
+  printLog("\n\n══════════════════════════════════════");
+  printLog("  Water Tank Monitor — Starting Up");
+  printLog("══════════════════════════════════════");
 
   // 1. Initialize sensor pins & filter
   initSensor();
@@ -100,7 +100,7 @@ void setup() {
   // 3. Attempt WiFi connection
   if (strlen(config.ssid) > 0 && connectWiFi()) {
     // 4. Run OTA update check (before normal operation)
-    Serial.println("\n[BOOT] Checking for firmware updates...");
+    printLog("\n[BOOT] Checking for firmware updates...");
     checkAndPerformOTA();
 
     // 5. Setup mDNS
@@ -110,8 +110,8 @@ void setup() {
     setupRoutes();
   } else {
     // No saved WiFi or connection failed → AP mode
-    Serial.println("[BOOT] No WiFi credentials or connection failed");
-    Serial.println("[BOOT] Starting Access Point for setup...");
+    printLog("[BOOT] No WiFi credentials or connection failed");
+    printLog("[BOOT] Starting Access Point for setup...");
     startAP();
     setupCaptivePortalRoutes();
   }
@@ -120,19 +120,20 @@ void setup() {
   server.begin();
 
   // 8. Take initial sensor reading
-  Serial.println("[BOOT] Taking initial sensor readings...");
+  printLog("[BOOT] Taking initial sensor readings...");
   for (int i = 0; i < 5; i++) {
     internalSensorRead();
     delay(500);
   }
   publishStableReading();
 
-  Serial.println("\n══════════════════════════════════════");
-  Serial.println("  Boot complete — system running");
-  Serial.printf("  Mode: %s\n", apMode ? "Access Point" : "WiFi Station");
-  Serial.printf("  Sensor: read every %ds, publish every %ds\n",
-                SENSOR_READ_INTERVAL / 1000, SENSOR_INTERVAL / 1000);
-  Serial.println("══════════════════════════════════════\n");
+  printLog("\n══════════════════════════════════════");
+  printLog("  Boot complete — system running");
+  printLog("  Mode: %s\n", apMode ? "Access Point" : "WiFi Station");
+  printLog("  Sensor: read every %ds, publish every %ds\n" +
+               SENSOR_READ_INTERVAL / 1000,
+           SENSOR_INTERVAL / 1000);
+  printLog("══════════════════════════════════════\n");
 }
 
 // ══════════════════════════════════════════════════════════════

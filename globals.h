@@ -62,6 +62,8 @@
 #define OTA_FIRMWARE_DOWNLOAD_URL                                              \
   "http://oms-macbook-air.local:8080/api/v1/device/firmware"
 
+#define baseLoggingUrl "http://oms-macbook-air.local:8080/api/v1/device/logs"
+
 // ─── Default Firmware Version ────────────────────────────────
 #define DEFAULT_FIRMWARE_VERSION "1.0.0"
 

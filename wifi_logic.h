@@ -14,24 +14,25 @@
 
 // ─── Connect to WiFi (STA Mode) ─────────────────────────────
 inline bool connectWiFi() {
-  Serial.printf("[WIFI] Connecting to: %s", config.ssid);
+  printLog("[WIFI] Connecting to: %s", config.ssid);
   WiFi.mode(WIFI_STA);
   WiFi.begin(config.ssid, config.pass);
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - start > WIFI_CONNECT_TIMEOUT) {
-      Serial.println(" FAILED");
-      Serial.println("[WIFI] Connection timed out");
+      printLog(" FAILED");
+      printLog("[WIFI] Connection timed out");
       return false;
     }
     delay(500);
-    Serial.print(".");
+    printLog(".");
   }
-  Serial.println(" OK");
-  Serial.print("[WIFI] IP Address: ");
-  Serial.println(WiFi.localIP());
-  Serial.printf("[WIFI] Signal strength (RSSI): %d dBm\n", WiFi.RSSI());
+  printLog(" OK\n");
+  printLog("[WIFI] IP Address: ");
+  printLog(WiFi.localIP().toString().c_str());
+  printLog("\n");
+  printLog("[WIFI] Signal strength (RSSI): %d dBm\n", WiFi.RSSI());
   return true;
 }
 
@@ -45,17 +46,18 @@ inline void startAP() {
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
 
   WiFi.softAP(AP_SSID, AP_PASS);
-  Serial.print("[WIFI] AP Mode started. IP: ");
-  Serial.println(WiFi.softAPIP());
+  printLog("[WIFI] AP Mode started. IP: ");
+  printLog(WiFi.softAPIP().toString().c_str());
+  printLog("\n");
 }
 
 // ─── Setup mDNS ─────────────────────────────────────────────
 inline bool setupMDNS() {
   if (MDNS.begin(MDNS_NAME)) {
-    Serial.printf("[WIFI] mDNS started: http://%s.local\n", MDNS_NAME);
+    printLog("[WIFI] mDNS started: http://%s.local\n", MDNS_NAME);
     return true;
   }
-  Serial.println("[WIFI] mDNS failed to start");
+  printLog("[WIFI] mDNS failed to start");
   return false;
 }
 

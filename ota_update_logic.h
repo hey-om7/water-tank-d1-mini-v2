@@ -31,7 +31,7 @@ inline void saveFirmwareVersion(const String &version) {
     }
   }
   EEPROM.commit();
-  Serial.printf("[OTA] Firmware version saved: %s\n", version.c_str());
+  printLog("[OTA] Firmware version saved: %s\n", version.c_str());
 }
 
 // ─── Load Firmware Version from EEPROM ───────────────────────
@@ -46,12 +46,12 @@ inline String loadFirmwareVersion() {
 
   // Validate: must start with a digit (e.g., "1.0.0")
   if (version[0] < '0' || version[0] > '9') {
-    Serial.println("[OTA] No valid version in EEPROM, using default");
+    printLog("[OTA] No valid version in EEPROM, using default");
     return String(DEFAULT_FIRMWARE_VERSION);
   }
 
   String result = String(version);
-  Serial.printf("[OTA] Loaded firmware version: %s\n", result.c_str());
+  printLog("[OTA] Loaded firmware version: %s\n", result.c_str());
   return result;
 }
 
@@ -81,17 +81,17 @@ inline bool isNewerVersion(const String &current, const String &latest) {
   int latMajor, latMinor, latPatch;
 
   if (!parseSemVer(current, curMajor, curMinor, curPatch)) {
-    Serial.printf("[OTA] Failed to parse current version: %s\n",
+    printLog("[OTA] Failed to parse current version: %s\n",
                   current.c_str());
     return false;
   }
 
   if (!parseSemVer(latest, latMajor, latMinor, latPatch)) {
-    Serial.printf("[OTA] Failed to parse latest version: %s\n", latest.c_str());
+    printLog("[OTA] Failed to parse latest version: %s\n", latest.c_str());
     return false;
   }
 
-  Serial.printf("[OTA] Current: %d.%d.%d | Latest: %d.%d.%d\n", curMajor,
+  printLog("[OTA] Current: %d.%d.%d | Latest: %d.%d.%d\n", curMajor,
                 curMinor, curPatch, latMajor, latMinor, latPatch);
 
   if (latMajor != curMajor)
@@ -105,17 +105,17 @@ inline bool isNewerVersion(const String &current, const String &latest) {
 // Call this during setup() after WiFi is connected.
 inline void checkAndPerformOTA() {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[OTA] WiFi not connected, skipping OTA check");
+    printLog("[OTA] WiFi not connected, skipping OTA check");
     return;
   }
 
   String currentVersion = loadFirmwareVersion();
   String macAddress = WiFi.macAddress();
 
-  Serial.println("[OTA] ─────────────────────────────────────");
-  Serial.println("[OTA] Checking for firmware updates...");
-  Serial.printf("[OTA] Device MAC: %s\n", macAddress.c_str());
-  Serial.printf("[OTA] Current version: %s\n", currentVersion.c_str());
+  printLog("[OTA] ─────────────────────────────────────");
+  printLog("[OTA] Checking for firmware updates...");
+  printLog("[OTA] Device MAC: %s\n", macAddress.c_str());
+  printLog("[OTA] Current version: %s\n", currentVersion.c_str());
 
   // ── Step 1: Check latest version from server ──
   WiFiClient client;
@@ -124,16 +124,16 @@ inline void checkAndPerformOTA() {
   String versionUrl =
       String(OTA_VERSION_CHECK_URL) + "?macAddress=" + macAddress;
 
-  Serial.printf("[OTA] Version check URL: %s\n", versionUrl.c_str());
+  printLog("[OTA] Version check URL: %s\n", versionUrl.c_str());
 
   if (!http.begin(client, versionUrl)) {
-    Serial.println("[OTA] Failed to connect to version server");
+    printLog("[OTA] Failed to connect to version server");
     return;
   }
 
   int httpCode = http.GET();
   if (httpCode != HTTP_CODE_OK) {
-    Serial.printf("[OTA] Version check failed, HTTP code: %d\n", httpCode);
+    printLog("[OTA] Version check failed, HTTP code: %d\n", httpCode);
     http.end();
     return;
   }
@@ -141,43 +141,43 @@ inline void checkAndPerformOTA() {
   String payload = http.getString();
   http.end();
 
-  Serial.printf("[OTA] Server response: %s\n", payload.c_str());
+  printLog("[OTA] Server response: %s\n", payload.c_str());
 
   // ── Step 2: Parse JSON response ──
   StaticJsonDocument<256> doc;
   DeserializationError jsonErr = deserializeJson(doc, payload);
   if (jsonErr) {
-    Serial.printf("[OTA] JSON parse error: %s\n", jsonErr.c_str());
+    printLog("[OTA] JSON parse error: %s\n", jsonErr.c_str());
     return;
   }
 
   // Extract version from JSON (expects {"version": "x.y.z"})
   const char *latestVersion = doc["data"];
   if (!latestVersion) {
-    Serial.println("[OTA] No 'version' field in response");
+    printLog("[OTA] No 'version' field in response");
     return;
   }
 
   String latestVersionStr = String(latestVersion);
-  Serial.printf("[OTA] Latest version from server: %s\n",
+  printLog("[OTA] Latest version from server: %s\n",
                 latestVersionStr.c_str());
 
   // ── Step 3: Compare versions ──
   if (!isNewerVersion(currentVersion, latestVersionStr)) {
-    Serial.println("[OTA] Firmware is up to date ✓");
-    Serial.println("[OTA] ─────────────────────────────────────");
+    printLog("[OTA] Firmware is up to date ✓");
+    printLog("[OTA] ─────────────────────────────────────");
     return;
   }
 
   // ── Step 4: Download and install firmware ──
-  Serial.println("[OTA] *** New firmware available! ***");
-  Serial.printf("[OTA] Updating: %s → %s\n", currentVersion.c_str(),
+  printLog("[OTA] *** New firmware available! ***");
+  printLog("[OTA] Updating: %s → %s\n", currentVersion.c_str(),
                 latestVersionStr.c_str());
 
   String firmwareUrl =
       String(OTA_FIRMWARE_DOWNLOAD_URL) + "?macAddress=" + macAddress;
 
-  Serial.printf("[OTA] Downloading firmware from: %s\n", firmwareUrl.c_str());
+  printLog("[OTA] Downloading firmware from: %s\n", firmwareUrl.c_str());
 
   // Configure HTTPUpdate
   ESPhttpUpdate.setLedPin(LED_BUILTIN, LOW);
@@ -187,28 +187,28 @@ inline void checkAndPerformOTA() {
 
   switch (ret) {
   case HTTP_UPDATE_OK:
-    Serial.println("[OTA] ★ Update successful! ★");
+    printLog("[OTA] ★ Update successful! ★");
     // Save new version to EEPROM before restart
     saveFirmwareVersion(latestVersionStr);
-    Serial.println("[OTA] New version saved to EEPROM");
-    Serial.println("[OTA] Restarting device...");
-    Serial.println("[OTA] ─────────────────────────────────────");
+    printLog("[OTA] New version saved to EEPROM");
+    printLog("[OTA] Restarting device...");
+    printLog("[OTA] ─────────────────────────────────────");
     delay(1000);
     ESP.restart();
     break;
 
   case HTTP_UPDATE_FAILED:
-    Serial.printf("[OTA] Update FAILED (Error %d): %s\n",
+    printLog("[OTA] Update FAILED (Error %d): %s\n",
                   ESPhttpUpdate.getLastError(),
                   ESPhttpUpdate.getLastErrorString().c_str());
     break;
 
   case HTTP_UPDATE_NO_UPDATES:
-    Serial.println("[OTA] No update available from server");
+    printLog("[OTA] No update available from server");
     break;
   }
 
-  Serial.println("[OTA] ─────────────────────────────────────");
+  printLog("[OTA] ─────────────────────────────────────");
 }
 
 #endif // OTA_UPDATE_LOGIC_H

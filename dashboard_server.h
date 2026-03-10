@@ -31,7 +31,7 @@ inline void logToGoogleSheets() {
   if (WiFi.status() != WL_CONNECTED)
     return;
 
-  Serial.println("[SERVER] Logging to Google Sheets...");
+  printLog("[SERVER] Logging to Google Sheets...");
 
   std::unique_ptr<BearSSL::WiFiClientSecure> client(
       new BearSSL::WiFiClientSecure);
@@ -53,25 +53,25 @@ inline void logToGoogleSheets() {
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
     int code = http.POST(payload);
-    Serial.printf("[SERVER] Sheets response: %d\n", code);
+    printLog("[SERVER] Sheets response: %d\n", code);
 
     if (code > 0) {
       if (code == HTTP_CODE_OK || code == HTTP_CODE_FOUND ||
           code == HTTP_CODE_MOVED_PERMANENTLY) {
-        Serial.println("[SERVER] Successfully logged to Sheets!");
+        printLog("[SERVER] Successfully logged to Sheets!");
       } else {
-        Serial.printf("[SERVER] Warning: Sheets returned HTTP %d\n", code);
+        printLog("[SERVER] Warning: Sheets returned HTTP %d\n", code);
         String response = http.getString();
-        Serial.printf("[SERVER] Response body: %s\n", response.c_str());
+        printLog("[SERVER] Response body: %s\n", response.c_str());
       }
     } else {
-      Serial.printf("[SERVER] HTTP Request failed, error: %s\n",
+      printLog("[SERVER] HTTP Request failed, error: %s\n",
                     http.errorToString(code).c_str());
     }
 
     http.end();
   } else {
-    Serial.println("[SERVER] Unable to connect to webhook URL.");
+    printLog("[SERVER] Unable to connect to webhook URL.");
   }
 }
 
@@ -205,7 +205,7 @@ inline void setupRoutes() {
   server.on("/api/restart", HTTP_GET, []() {
     server.send(200, "application/json",
                 "{\"ok\":true,\"msg\":\"Restarting...\"}");
-    Serial.println("[SERVER] Restart requested via API");
+    printLog("[SERVER] Restart requested via API");
     delay(500);
     ESP.restart();
   });
@@ -217,7 +217,7 @@ inline void setupRoutes() {
                   DASHBOARD_GZ_LEN);
   });
 
-  Serial.println("[SERVER] Dashboard routes configured");
+  printLog("[SERVER] Dashboard routes configured");
 }
 
 // ─── Setup Captive Portal Routes (AP Mode) ───────────────────
@@ -313,7 +313,7 @@ else{m.className='msg err';m.textContent='Error saving. Try again.';m.style.disp
     server.send(302, "text/plain", "");
   });
 
-  Serial.println("[SERVER] Captive portal routes configured");
+  printLog("[SERVER] Captive portal routes configured");
 }
 
 #endif // DASHBOARD_SERVER_H

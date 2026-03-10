@@ -19,14 +19,14 @@ inline void initSensor() {
   pinMode(TRIGGER_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
   digitalWrite(TRIGGER_PIN, LOW);
-  Serial.println("[SENSOR] Pins initialized");
+  printLog("[SENSOR] Pins initialized");
 }
 
 // ─── Initialize Fill Detection History ───────────────────────
 inline void initFillDetection() {
   for (int i = 0; i < FILL_WINDOW; i++)
     levelHistory[i] = -1;
-  Serial.println("[SENSOR] Fill detection initialized");
+  printLog("[SENSOR] Fill detection initialized");
 }
 
 // ─── Initialize Filter State ────────────────────────────────
@@ -37,7 +37,7 @@ inline void initFilter() {
   filterBufCount = 0;
   lastValidDistance = -1;
   emaDistance = -1;
-  Serial.println("[SENSOR] Filter initialized");
+  printLog("[SENSOR] Filter initialized");
 }
 
 // ─── Bubble Sort (for median) ────────────────────────────────
@@ -104,7 +104,7 @@ inline float rejectSpike(float rawDist) {
   float diff = abs(rawDist - lastValidDistance);
   if (diff > SPIKE_THRESHOLD) {
     // Spike detected — reject and return last valid
-    Serial.printf("[SENSOR] Spike rejected: %.1f cm (diff=%.1f from %.1f)\n",
+    printLog("[SENSOR] Spike rejected: %.1f cm (diff=%.1f from %.1f)\n",
                   rawDist, diff, lastValidDistance);
     return -1; // Signal bad reading
   }
@@ -143,7 +143,7 @@ inline void internalSensorRead() {
       filterBufCount++;
   }
 
-  Serial.printf("[SENSOR] Raw:%.1f Cleaned:%.1f EMA:%.1f\n", raw, cleaned,
+  printLog("[SENSOR] Raw:%.1f Cleaned:%.1f EMA:%.1f\n", raw, cleaned,
                 smoothed);
 }
 
@@ -191,7 +191,7 @@ inline float calculateLiters(float distance) {
 // Averages the filter buffer to produce the final stable value.
 inline void publishStableReading() {
   if (filterBufCount == 0) {
-    Serial.println("[SENSOR] No valid data to publish");
+    printLog("[SENSOR] No valid data to publish");
     return;
   }
 
@@ -205,7 +205,7 @@ inline void publishStableReading() {
   currentLevel = calculateLevel(currentDistance);
   currentLiters = calculateLiters(currentDistance);
 
-  Serial.printf("[SENSOR] ─── Published: %.1f cm | %.1f%% | %.1f L (from %d "
+  printLog("[SENSOR] ─── Published: %.1f cm | %.1f%% | %.1f L (from %d "
                 "samples) ───\n",
                 currentDistance, currentLevel, currentLiters, filterBufCount);
 }
