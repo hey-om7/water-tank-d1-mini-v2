@@ -745,7 +745,49 @@
 
     .chart-svg-wrap {
       position: relative;
-      height: 160px
+      height: 160px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .chart-loader {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      color: var(--text3);
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .5px;
+      animation: pulse 2s infinite ease-in-out;
+    }
+
+    .chart-loader-spinner {
+      width: 32px;
+      height: 32px;
+      border: 3px solid rgba(100, 160, 255, .1);
+      border-top-color: var(--cyan);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: .5;
+      }
+
+      50% {
+        opacity: 1;
+      }
     }
 
     .chart-svg-wrap svg {
@@ -1175,8 +1217,10 @@
                 <path d="M12 7v5l4 2"></path>
               </svg></i>Last Filled</div>
           <div id="lfContent">
-            <div class="last-fill-val" id="lfTime">No data</div>
-            <div class="last-fill-ago" id="lfAgo"></div>
+            <div class="chart-loader" style="padding: 10px 0;">
+              <div class="chart-loader-spinner" style="border-top-color: var(--purple)"></div>
+              <div>Loading data...</div>
+            </div>
           </div>
         </div>
       </div>
@@ -1249,7 +1293,12 @@
               stroke-linejoin="round">
               <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
             </svg></i>24-Hour Trend</div>
-        <div class="chart-svg-wrap" id="chart24"></div>
+        <div class="chart-svg-wrap" id="chart24">
+          <div class="chart-loader">
+            <div class="chart-loader-spinner"></div>
+            <div>Loading data...</div>
+          </div>
+        </div>
       </div>
       <div class="card chart-card">
         <div class="card-hdr"><i style="background:rgba(0,232,135,.12);color:var(--green)"><svg viewBox="0 0 24 24"
@@ -1260,7 +1309,12 @@
               <line x1="8" y1="12" x2="8" y2="21"></line>
               <line x1="16" y1="16" x2="16" y2="21"></line>
             </svg></i>7-Day Usage</div>
-        <div class="chart-svg-wrap" id="chart7Day"></div>
+        <div class="chart-svg-wrap" id="chart7Day">
+          <div class="chart-loader">
+            <div class="chart-loader-spinner" style="border-top-color: var(--green)"></div>
+            <div>Loading data...</div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1739,12 +1793,25 @@
           break;
         }
       }
-      const el = document.getElementById('lfTime'), ag = document.getElementById('lfAgo');
+      const box = document.getElementById('lfContent');
       if (lf && bootEpoch > 0) {
-        el.textContent = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const timeStr = lf.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const m = Math.floor((Date.now() - lf.getTime()) / 60000);
-        ag.textContent = m < 1 ? 'Just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
-      } else { el.textContent = 'No data'; ag.textContent = bootEpoch === 0 ? 'Waiting for sync...' : ''; }
+        const agoStr = m < 1 ? 'Just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.floor(m / 60) + 'h ago' : Math.floor(m / 1440) + 'd ago';
+
+        box.innerHTML =
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
+          '<div class="last-fill-val" id="lfTime">' + timeStr + '</div>' +
+          '<div class="last-fill-ago" id="lfAgo">' + agoStr + '</div>' +
+          '</div>';
+      } else {
+        const agoStr = bootEpoch === 0 ? 'Waiting for sync...' : '';
+        box.innerHTML =
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px">' +
+          '<div class="last-fill-val" id="lfTime">No data</div>' +
+          '<div class="last-fill-ago" id="lfAgo">' + agoStr + '</div>' +
+          '</div>';
+      }
     }
 
     // Config
