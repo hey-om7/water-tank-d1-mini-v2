@@ -189,13 +189,61 @@ function doGet(e) {
       };
     }
 
+    // ─── Calculate 7-Day Usage ───────────────────────────────
+    // Get last ~2016 rows to cover 7 days (288 * 7 = 2016)
+    var usageRows = Math.min(2500, lastRow - 1);
+    var usageStart = Math.max(2, lastRow - usageRows + 1);
+    var usageRange = sheet.getRange(usageStart, 1, lastRow - usageStart + 1, 2);
+    var usageValues = usageRange.getValues();
+
+    var dailyUsage = {};
+    var lastLvl = null;
+    for (var i = 0; i < usageValues.length; i++) {
+      var uTs = usageValues[i][0];
+      var uLvl = parseFloat(usageValues[i][1]) || 0;
+
+      var epochSec = 0;
+      if (uTs instanceof Date) {
+        epochSec = Math.floor(uTs.getTime() / 1000);
+      } else if (typeof uTs === 'number') {
+        epochSec = Math.floor(uTs);
+      } else {
+        continue;
+      }
+
+      // format date YYYY-MM-DD based on the timestamp
+      var dObj = new Date(epochSec * 1000);
+      var y = dObj.getFullYear();
+      var m = ('0' + (dObj.getMonth() + 1)).slice(-2);
+      var d = ('0' + dObj.getDate()).slice(-2);
+      var dayStr = y + '-' + m + '-' + d;
+
+      if (!dailyUsage[dayStr]) {
+        dailyUsage[dayStr] = { drop: 0, ts: epochSec };
+      }
+
+      if (lastLvl !== null) {
+        var drop = lastLvl - uLvl;
+        // filter out huge drops > 30% in 5 mins (likely sensor glitch)
+        if (drop > 0 && drop <= 30) {
+          dailyUsage[dayStr].drop += drop;
+        }
+      }
+      lastLvl = uLvl;
+    }
+
+    // convert to array and get last 7 days
+    var usage7d = Object.keys(dailyUsage).sort().slice(-7).map(function (k) {
+      return { day: k, drop: Math.round(dailyUsage[k].drop), t: dailyUsage[k].ts };
+    });
+
     return ContentService
-      .createTextOutput(JSON.stringify({ status: "ok", data: result, lastFilled: lastFilled }))
+      .createTextOutput(JSON.stringify({ status: "ok", data: result, lastFilled: lastFilled, usage7d: usage7d }))
       .setMimeType(ContentService.MimeType.JSON);
 
   } catch (error) {
     return ContentService
-      .createTextOutput(JSON.stringify({ status: "error", message: error.toString(), data: [], lastFilled: null }))
+      .createTextOutput(JSON.stringify({ status: "error", message: error.toString(), data: [], lastFilled: null, usage7d: [] }))
       .setMimeType(ContentService.MimeType.JSON);
   }
 }

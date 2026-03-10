@@ -1255,10 +1255,12 @@
         <div class="card-hdr"><i style="background:rgba(0,232,135,.12);color:var(--green)"><svg viewBox="0 0 24 24"
               width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
               stroke-linejoin="round">
-              <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"></polyline>
-              <polyline points="17 6 23 6 23 12"></polyline>
-            </svg></i>Last Refill</div>
-        <div class="chart-svg-wrap" id="chartRefill"></div>
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+              <line x1="12" y1="8" x2="12" y2="21"></line>
+              <line x1="8" y1="12" x2="8" y2="21"></line>
+              <line x1="16" y1="16" x2="16" y2="21"></line>
+            </svg></i>7-Day Usage</div>
+        <div class="chart-svg-wrap" id="chart7Day"></div>
       </div>
     </div>
 
@@ -1561,9 +1563,9 @@
         }
         // Update Last Filled from server-side scan
         updLFFromSheets(d.lastFilled || null);
-        // Store refill data points for the chart
-        if (d.lastFilled && d.lastFilled.refillData && d.lastFilled.refillData.length > 0) {
-          drawRefillChart(d.lastFilled.refillData);
+        // Draw 7-Day Usage chart
+        if (d.usage7d && d.usage7d.length > 0) {
+          draw7DayChart(d.usage7d);
         }
       } catch (e) { console.log('Sheets fetch error:', e); }
     }
@@ -1642,74 +1644,50 @@
       svg += '</svg>';
       el.innerHTML = svg;
     }
-    function drawRefillChart(data) {
-      const el = document.getElementById('chartRefill');
+    function draw7DayChart(data) {
+      const el = document.getElementById('chart7Day');
       if (!data || !data.length) {
-        el.innerHTML = '<svg viewBox="0 0 500 160"><text class="chart-no-data" x="250" y="85">No refill data</text></svg>';
+        el.innerHTML = '<svg viewBox="0 0 500 160"><text class="chart-no-data" x="250" y="85">No 7-day data</text></svg>';
         return;
       }
       const W = 500, H = 150, pad = 30, cW = W - pad * 2, cH = H - 20;
-      // Y axis: scale from slightly below min to slightly above max for a nice view
-      const levels = data.map(d => d.l);
-      const rawMin = Math.min(...levels);
-      const rawMax = Math.max(...levels);
-      const yPad = Math.max(5, (rawMax - rawMin) * 0.15);
-      const mn = Math.max(0, Math.floor(rawMin - yPad));
-      const mx = Math.min(100, Math.ceil(rawMax + yPad));
-      const yRange = mx - mn || 1;
-
-      let pts = data.map((d, i) => {
-        const x = pad + (i / (data.length - 1 || 1)) * cW;
-        const y = H - 10 - ((d.l - mn) / yRange) * cH;
-        return { x, y, l: d.l, t: d.t };
-      });
+      const maxDrop = Math.max(...data.map(d => d.drop), 10);
+      const yRange = maxDrop * 1.2;
 
       let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
-      // Green gradient for refill
-      svg += '<defs><linearGradient id="refillGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(0,232,135,.45)"/><stop offset="100%" stop-color="rgba(0,232,135,0)"/></linearGradient></defs>';
+      svg += '<defs><linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="rgba(0,232,135,.8)"/><stop offset="100%" stop-color="rgba(0,232,135,.2)"/></linearGradient></defs>';
 
       // Grid lines
-      for (let i = 0; i <= 4; i++) {
-        const y = H - 10 - (i / 4) * cH;
-        const lbl = Math.round(mn + (i / 4) * yRange);
+      for (let i = 0; i <= 3; i++) {
+        const y = H - 10 - (i / 3) * cH;
+        const lbl = Math.round((i / 3) * yRange);
         svg += '<line x1="' + pad + '" y1="' + y + '" x2="' + (W - pad) + '" y2="' + y + '" class="chart-grid-line"/>';
-        svg += '<text x="' + (pad - 4) + '" y="' + (y + 3) + '" class="chart-label" text-anchor="end">' + lbl + '%</text>';
-      }
-
-      // Time labels
-      if (data.length > 1) {
-        const idxs = [0, data.length - 1];
-        if (data.length > 4) {
-          idxs.splice(1, 0, Math.floor(data.length / 2));
+        if (i > 0) {
+          svg += '<text x="' + (pad - 4) + '" y="' + (y + 3) + '" class="chart-label" text-anchor="end">' + lbl + '%</text>';
         }
-        idxs.forEach(i => {
-          if (i >= data.length) return;
-          const d = new Date(data[i].t * 1000);
-          const lbl = d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
-          svg += '<text x="' + pts[i].x + '" y="' + (H - 0) + '" class="chart-label" text-anchor="middle">' + lbl + '</text>';
-        });
       }
 
-      // Area fill (green)
-      let area = 'M' + pts[0].x + ',' + pts[0].y;
-      pts.forEach((p, i) => { if (i > 0) area += ' L' + p.x + ',' + p.y; });
-      area += ' L' + pts[pts.length - 1].x + ',' + (H - 10) + ' L' + pts[0].x + ',' + (H - 10) + ' Z';
-      svg += '<path d="' + area + '" fill="url(#refillGrad)"/>';
+      // Bars
+      const n = 7;
+      const barW = (cW / n) * 0.5;
+      const startIdx = Math.max(0, n - data.length);
 
-      // Line (green)
-      let line = 'M' + pts[0].x + ',' + pts[0].y;
-      pts.forEach((p, i) => { if (i > 0) line += ' L' + p.x + ',' + p.y; });
-      svg += '<path d="' + line + '" fill="none" stroke="var(--green, #00e887)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+      data.forEach((d, i) => {
+        const cx = pad + (startIdx + i + 0.5) * (cW / n);
+        const barH = (d.drop / yRange) * cH;
+        const barX = cx - barW / 2;
+        const barY = H - 10 - barH;
 
-      // Start and end dots
-      const fp = pts[0];
-      const lp = pts[pts.length - 1];
-      svg += '<circle cx="' + fp.x + '" cy="' + fp.y + '" r="3" fill="var(--text3)" stroke="var(--surface)" stroke-width="1"/>';
-      svg += '<circle cx="' + lp.x + '" cy="' + lp.y + '" r="4" fill="var(--green, #00e887)" stroke="var(--surface)" stroke-width="1.5"/>';
+        svg += '<rect x="' + barX + '" y="' + barY + '" width="' + barW + '" height="' + Math.max(0, barH) + '" rx="4" fill="url(#barGrad)"/>';
 
-      // Start and end level labels
-      svg += '<text x="' + (fp.x + 6) + '" y="' + (fp.y - 6) + '" class="chart-label" fill="var(--text3)">' + Math.round(fp.l) + '%</text>';
-      svg += '<text x="' + (lp.x - 6) + '" y="' + (lp.y - 6) + '" class="chart-label" text-anchor="end" fill="var(--green, #00e887)">' + Math.round(lp.l) + '%</text>';
+        if (d.drop > 0) {
+          svg += '<text x="' + cx + '" y="' + (barY - 5) + '" class="chart-label" text-anchor="middle" fill="var(--green, #00e887)">' + d.drop + '%</text>';
+        }
+
+        const dObj = new Date(d.t * 1000);
+        const dayStr = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][dObj.getDay()];
+        svg += '<text x="' + cx + '" y="' + (H + 4) + '" class="chart-label" text-anchor="middle">' + dayStr + '</text>';
+      });
 
       svg += '</svg>';
       el.innerHTML = svg;
@@ -1751,14 +1729,7 @@
         '<span style="display:flex;align-items:center"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px"><circle cx="12" cy="14" r="8"></circle><path d="M12 10v4l2 2"></path><path d="M10 3h4"></path><path d="M12 3v3"></path></svg>' + durStr + '</span>' +
         '</div>';
     }
-    function drawRefill() {
-      if (!hist.length) { drawChart('chartRefill', []); return; }
-      let ri = 0;
-      for (let i = hist.length - 1; i > 0; i--) {
-        if (hist[i].l - hist[i - 1].l > 3) { let s = i - 1; while (s > 0 && hist[s].l - hist[s - 1].l > 0.5) s--; ri = Math.max(0, s); break; }
-      }
-      drawChart('chartRefill', hist.slice(ri));
-    }
+
     function updLF() {
       let lf = null;
       for (let i = hist.length - 1; i >= 0; i--) {
