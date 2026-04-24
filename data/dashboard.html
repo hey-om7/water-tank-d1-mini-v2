@@ -6,8 +6,6 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0">
   <title>Water Tank Monitor</title>
   <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
-
     * {
       margin: 0;
       padding: 0;
@@ -39,7 +37,7 @@
     }
 
     body {
-      font-family: 'Inter', system-ui, sans-serif;
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
@@ -822,13 +820,13 @@
     .chart-label {
       fill: var(--text3);
       font-size: 9px;
-      font-family: 'Inter', sans-serif
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif
     }
 
     .chart-no-data {
       fill: var(--text3);
       font-size: 11px;
-      font-family: 'Inter', sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       text-anchor: middle
     }
 
@@ -840,7 +838,7 @@
       padding: 9px 18px;
       border-radius: 10px;
       cursor: pointer;
-      font-family: 'Inter', sans-serif;
+      font-family: inherit;
       font-size: .78rem;
       font-weight: 600;
       display: flex;
@@ -897,7 +895,7 @@
       border: 1px solid var(--border);
       border-radius: 9px;
       color: var(--text);
-      font-family: 'Inter', sans-serif;
+      font-family: inherit;
       font-size: .85rem;
       transition: border .2s
     }
@@ -918,7 +916,7 @@
       padding: 10px 20px;
       border: none;
       border-radius: 9px;
-      font-family: 'Inter', sans-serif;
+      font-family: inherit;
       font-size: .8rem;
       font-weight: 700;
       cursor: pointer;
@@ -1238,8 +1236,8 @@
             <path d="M10 12l2-2"></path>
             <path d="M14 8l2-2"></path>
           </svg></div>
-        <div class="stat-val" id="sDist">--<span class="stat-unit">cm</span></div>
-        <div class="stat-lbl">Distance</div>
+        <div class="stat-val" id="sDist">--<span class="stat-unit">%</span></div>
+        <div class="stat-lbl">Raw Level (2s)</div>
         <div class="stat-bar">
           <div class="stat-bar-fill" id="sDistBar" style="width:0;background:var(--blue)"></div>
         </div>
@@ -1480,8 +1478,8 @@
       document.getElementById('tMeta').textContent = (d.distance || 0).toFixed(1) + ' cm from sensor';
       document.getElementById('tMeta2').textContent = 'Updated every 30 seconds';
       // Stats
-      document.getElementById('sDist').innerHTML = (d.distance || 0) + '<span class="stat-unit">cm</span>';
-      document.getElementById('sDistBar').style.width = Math.min(100, (d.distance || 0) / 3) + '%';
+      document.getElementById('sDist').innerHTML = (d.rawLevel || 0) + '<span class="stat-unit">%</span>';
+      document.getElementById('sDistBar').style.width = (d.rawLevel || 0) + '%';
       // Water Remaining (liters)
       const liters = d.liters || 0;
       document.getElementById('sLiters').innerHTML = liters + '<span class="stat-unit">L</span>';

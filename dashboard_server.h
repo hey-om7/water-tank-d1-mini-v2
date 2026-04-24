@@ -11,6 +11,7 @@
 #include "config_logic.h"
 #include "dashboard.h"
 #include "globals.h"
+#include "sensor_logic.h"
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecureBearSSL.h>
@@ -88,6 +89,7 @@ inline void setupRoutes() {
   server.on("/api/status", HTTP_GET, []() {
     StaticJsonDocument<256> doc;
     doc["level"] = round(currentLevel * 10) / 10.0;
+    doc["rawLevel"] = round(calculateLevel(currentRawDistance) * 10) / 10.0;
     doc["distance"] = round(currentDistance * 10) / 10.0;
     doc["filling"] = isFilling;
     doc["fillRate"] = round(fillRate * 100) / 100.0;

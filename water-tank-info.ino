@@ -58,7 +58,8 @@ float filterBuffer[FILTER_BUFFER_SIZE];
 int filterBufIdx = 0;
 int filterBufCount = 0;
 float lastValidDistance = -1;
-float emaDistance = -1;
+float currentRawDistance = 0;
+int spikeCount = 0;
 unsigned long lastInternalRead = 0;
 
 // Fill detection state
@@ -143,7 +144,7 @@ void loop() {
   server.handleClient();
 
   if (!apMode)
-    MDNS.update();
+    maintainMDNS();
 
   unsigned long now = millis();
 

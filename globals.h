@@ -102,7 +102,8 @@ extern float filterBuffer[];
 extern int filterBufIdx;
 extern int filterBufCount;
 extern float lastValidDistance;
-extern float emaDistance;
+extern float currentRawDistance;
+extern int spikeCount;
 extern unsigned long lastInternalRead;
 
 // Fill detection state

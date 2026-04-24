@@ -36,26 +36,14 @@ inline void initFilter() {
   filterBufIdx = 0;
   filterBufCount = 0;
   lastValidDistance = -1;
-  emaDistance = -1;
+  currentRawDistance = 0;
+  spikeCount = 0;
   printLog("[SENSOR] Filter initialized");
 }
 
-// ─── Bubble Sort (for median) ────────────────────────────────
-inline void sortArray(float arr[], int n) {
-  for (int i = 0; i < n - 1; i++) {
-    for (int j = 0; j < n - i - 1; j++) {
-      if (arr[j] > arr[j + 1]) {
-        float tmp = arr[j];
-        arr[j] = arr[j + 1];
-        arr[j + 1] = tmp;
-      }
-    }
-  }
-}
-
-// ─── Read Raw Distance (Single Burst, Median of 7) ──────────
-// Takes 7 samples, sorts them, returns the median.
-// This removes extreme spikes at the hardware level.
+// ─── Read Raw Distance (Burst of 7, Average) ────────────────
+// Takes 7 samples, returns their average.
+// This provides a smoother base reading over the 2-second interval.
 inline float readRawDistance() {
   float samples[SENSOR_SAMPLES];
   int validCount = 0;
@@ -84,9 +72,12 @@ inline float readRawDistance() {
     return -1; // No valid readings
   }
 
-  // Sort and return median
-  sortArray(samples, validCount);
-  return samples[validCount / 2];
+  // Calculate and return average
+  float sum = 0;
+  for (int i = 0; i < validCount; i++) {
+    sum += samples[i];
+  }
+  return sum / validCount;
 }
 
 // ─── Stage 2: Spike Rejection ────────────────────────────────
@@ -103,6 +94,14 @@ inline float rejectSpike(float rawDist) {
 
   float diff = abs(rawDist - lastValidDistance);
   if (diff > SPIKE_THRESHOLD) {
+    spikeCount++;
+    if (spikeCount > 3) {
+      // Accept spike after 3 consecutive rejections to unfreeze
+      printLog("[SENSOR] Spike accepted (consecutive): %.1f cm\n", rawDist);
+      lastValidDistance = rawDist;
+      spikeCount = 0;
+      return rawDist;
+    }
     // Spike detected — reject and return last valid
     printLog("[SENSOR] Spike rejected: %.1f cm (diff=%.1f from %.1f)\n",
                   rawDist, diff, lastValidDistance);
@@ -111,40 +110,30 @@ inline float rejectSpike(float rawDist) {
 
   // Good reading
   lastValidDistance = rawDist;
+  spikeCount = 0;
   return rawDist;
 }
 
-// ─── Stage 3: EMA Smoothing ─────────────────────────────────
-// Exponential Moving Average: smoothed = α·new + (1-α)·old
-inline float applyEMA(float distance) {
-  if (distance < 0)
-    return emaDistance; // Keep previous on bad reading
-
-  if (emaDistance < 0) {
-    emaDistance = distance; // First reading
-    return distance;
-  }
-
-  emaDistance = EMA_ALPHA * distance + (1.0 - EMA_ALPHA) * emaDistance;
-  return emaDistance;
-}
-
 // ─── Internal Fast Read (called every 2s) ────────────────────
-// Reads sensor, filters through spike rejection, stores in buffer.
+// Reads sensor, filters through spike rejection, stores in buffer for SMA.
 inline void internalSensorRead() {
   float raw = readRawDistance();
+  
+  if (raw > 0) {
+    currentRawDistance = raw;
+  }
+  
   float cleaned = rejectSpike(raw);
-  float smoothed = applyEMA(cleaned);
 
-  if (smoothed > 0) {
-    filterBuffer[filterBufIdx] = smoothed;
+  if (cleaned > 0) {
+    filterBuffer[filterBufIdx] = cleaned;
     filterBufIdx = (filterBufIdx + 1) % FILTER_BUFFER_SIZE;
     if (filterBufCount < FILTER_BUFFER_SIZE)
       filterBufCount++;
   }
 
-  printLog("[SENSOR] Raw:%.1f Cleaned:%.1f EMA:%.1f\n", raw, cleaned,
-                smoothed);
+  printLog("[SENSOR] Raw:%.1f Cleaned:%.1f SMA-BufIdx:%d\n", raw, cleaned,
+                filterBufIdx);
 }
 
 // ─── Calculate Water Level Percentage ────────────────────────
