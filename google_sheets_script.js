@@ -285,13 +285,26 @@ function doGet(e) {
     }
 
     // ── Calculate 7-Day Usage ─────────────────────────────────
+    // Strategy: for each day, find the highest level reading and the lowest
+    // level reading that comes AFTER the highest (i.e. net consumption after
+    // the last refill of that day). This is immune to:
+    //   • sensor noise / oscillation accumulating via per-interval summing
+    //   • refills inflating the drop total
+    //   • cross-day lastLvl carry-over errors
+    //   • noise-window spikes (filtered below before use)
+    //
+    // Per-day consumption = peak level − trough level after that peak,
+    // capped at 100% (physically impossible to consume more than a full tank).
     var usageRows = Math.min(2500, lastRow - 1);
     var usageStart = Math.max(2, lastRow - usageRows + 1);
     var usageRange = sheet.getRange(usageStart, 1, lastRow - usageStart + 1, 2);
     var usageValues = usageRange.getValues();
 
-    var dailyUsage = {};
-    var lastLvl = null;
+    // Build per-day arrays of clean (spike-filtered) level readings
+    var dailyReadings = {};   // { "YYYY-MM-DD": [ { t, l }, ... ] }
+    var uPrevLvl = null;
+    var uPrevEpoch = null;
+
     for (var i = 0; i < usageValues.length; i++) {
       var uTs = usageValues[i][0];
       var uLvl = parseFloat(usageValues[i][1]) || 0;
@@ -304,29 +317,63 @@ function doGet(e) {
       } else {
         continue;
       }
+      if (uEpoch <= 0) continue;
 
-      var dObj = new Date(uEpoch * 1000);
-      var y = dObj.getFullYear();
-      var m = ('0' + (dObj.getMonth() + 1)).slice(-2);
-      var d = ('0' + dObj.getDate()).slice(-2);
-      var dayStr = y + '-' + m + '-' + d;
-
-      if (!dailyUsage[dayStr]) {
-        dailyUsage[dayStr] = { drop: 0, ts: uEpoch };
-      }
-
-      if (lastLvl !== null) {
-        var drop = lastLvl - uLvl;
-        // Only count drops (consumption), ignore rises (filling) and sensor glitches > 30%
-        if (drop > 0 && drop <= 30) {
-          dailyUsage[dayStr].drop += drop;
+      // Apply noise-window spike filter: clamp to previous clean level
+      var uDate = new Date(uEpoch * 1000);
+      if (uPrevLvl !== null) {
+        var uRise = uLvl - uPrevLvl;
+        if (isSpikeReading(uDate, uRise)) {
+          uLvl = uPrevLvl;
         }
       }
-      lastLvl = uLvl;
+
+      // Also reject any single-interval drop > 30% as a sensor glitch
+      // (a real tank cannot drain 30% in 5 minutes)
+      if (uPrevLvl !== null && (uPrevLvl - uLvl) > 30) {
+        uLvl = uPrevLvl;
+      }
+
+      uPrevLvl = uLvl;
+      uPrevEpoch = uEpoch;
+
+      var y = uDate.getFullYear();
+      var mo = ('0' + (uDate.getMonth() + 1)).slice(-2);
+      var dy = ('0' + uDate.getDate()).slice(-2);
+      var dayStr = y + '-' + mo + '-' + dy;
+
+      if (!dailyReadings[dayStr]) {
+        dailyReadings[dayStr] = { readings: [], ts: uEpoch };
+      }
+      dailyReadings[dayStr].readings.push(uLvl);
     }
 
-    var usage7d = Object.keys(dailyUsage).sort().slice(-7).map(function (k) {
-      return { day: k, drop: Math.round(dailyUsage[k].drop), t: dailyUsage[k].ts };
+    // For each day: consumption = max(level) − min(level after max)
+    // This captures "how much was used after the last refill today".
+    var usage7d = Object.keys(dailyReadings).sort().slice(-7).map(function (k) {
+      var readings = dailyReadings[k].readings;
+      if (readings.length < 2) {
+        return { day: k, drop: 0, t: dailyReadings[k].ts };
+      }
+
+      // Find the index of the peak level for the day
+      var peakIdx = 0;
+      for (var x = 1; x < readings.length; x++) {
+        if (readings[x] > readings[peakIdx]) peakIdx = x;
+      }
+
+      // Find the minimum level in all readings after the peak
+      var troughAfterPeak = readings[peakIdx];
+      for (var y = peakIdx + 1; y < readings.length; y++) {
+        if (readings[y] < troughAfterPeak) troughAfterPeak = readings[y];
+      }
+
+      var consumption = readings[peakIdx] - troughAfterPeak;
+
+      // Hard cap: can't consume more than 100% of a full tank in one day
+      consumption = Math.min(100, Math.max(0, consumption));
+
+      return { day: k, drop: Math.round(consumption), t: dailyReadings[k].ts };
     });
 
     return ContentService
