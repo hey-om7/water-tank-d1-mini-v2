@@ -20,10 +20,43 @@
  *   compared to the previous row, regardless of what the device reported.
  * - "Last Filled" session is detected purely from level rises of ≥ 2%,
  *   ignoring the "Is Filling" column entirely.
+ *
+ * NOISE WINDOW (06:30 – 08:30):
+ * - During this window the sensor produces random spikes.
+ * - A rise is only accepted if it is gradual: < 5% per 5-minute interval.
+ * - Any rise ≥ 5% inside this window is treated as a spike:
+ *     • the stored level is clamped to the previous row's value, and
+ *     • "Is Filling" is forced to "No".
+ * - Outside this window the logic is completely unchanged.
  */
 
 // Minimum level rise (%) between two consecutive rows to count as filling
 var FILL_RISE_THRESHOLD = 2.0;
+
+// Noise window: 06:30 – 08:30 local time (hours as decimals)
+var NOISE_WINDOW_START = 6.5;   // 06:30
+var NOISE_WINDOW_END   = 8.5;   // 08:30
+
+// Max rise (%) per reading that is still considered gradual inside the noise window
+var NOISE_MAX_GRADUAL_RISE = 5.0;
+
+/**
+ * Returns true if the given Date falls inside the noise window (06:30–08:30).
+ * Uses the spreadsheet's local timezone automatically (Apps Script Date is local).
+ */
+function isInNoiseWindow(date) {
+  var h = date.getHours() + date.getMinutes() / 60;
+  return h >= NOISE_WINDOW_START && h < NOISE_WINDOW_END;
+}
+
+/**
+ * Returns true if a level rise should be treated as a spike and discarded.
+ * Only fires inside the noise window; outside it always returns false.
+ */
+function isSpikeReading(date, rise) {
+  if (!isInNoiseWindow(date)) return false;          // outside window → never a spike
+  return rise >= NOISE_MAX_GRADUAL_RISE;             // inside window → spike if rise ≥ 5%
+}
 
 function doPost(e) {
   try {
@@ -55,7 +88,19 @@ function doPost(e) {
     var lastRow = sheet.getLastRow();
     if (lastRow >= 2) {
       var prevLevel = parseFloat(sheet.getRange(lastRow, 2).getValue()) || 0;
-      if (currentLevel - prevLevel >= FILL_RISE_THRESHOLD) {
+      var rise = currentLevel - prevLevel;
+
+      // ── Noise-window spike filter ──────────────────────────
+      // If this reading arrives during 06:30–08:30 AND the jump is ≥ 5%,
+      // it is a sensor spike: clamp the stored level to the previous value
+      // so the sheet stays clean, and force Is Filling = "No".
+      var now = new Date();
+      if (isSpikeReading(now, rise)) {
+        currentLevel = prevLevel;   // clamp — don't store the bad value
+        rise = 0;
+      }
+
+      if (rise >= FILL_RISE_THRESHOLD) {
         isFillingValue = "Yes";
       }
     }
@@ -142,9 +187,19 @@ function doGet(e) {
       }
 
       var lvl = parseFloat(level) || 0;
-      if (epochSec > 0) {
-        result.push({ t: epochSec, l: lvl });
+      if (epochSec <= 0) continue;
+
+      // Apply noise-window spike filter to chart data as well
+      if (result.length > 0) {
+        var prevResult = result[result.length - 1];
+        var rRise = lvl - prevResult.l;
+        var rDate = new Date(epochSec * 1000);
+        if (isSpikeReading(rDate, rRise)) {
+          lvl = prevResult.l;   // clamp spike to previous clean value
+        }
       }
+
+      result.push({ t: epochSec, l: lvl });
     }
 
     // ── Find Last Fill Session (level-rise based) ─────────────
@@ -158,15 +213,28 @@ function doGet(e) {
     var scanRange = sheet.getRange(scanStart, 1, lastRow - scanStart + 1, 2);
     var scanValues = scanRange.getValues();
 
-    // Build a flat array of { epochSec, level } for easier processing
+    // Build a flat array of { epochSec, level } for easier processing.
+    // Apply the same noise-window spike filter used in doPost so that
+    // historical spike rows don't trigger false fill-session detection.
     var pts = [];
     for (var p = 0; p < scanValues.length; p++) {
       var pTs = scanValues[p][0];
       var pEpoch = (pTs instanceof Date) ? Math.floor(pTs.getTime() / 1000) : Math.floor(pTs);
       var pLvl = parseFloat(scanValues[p][1]) || 0;
-      if (pEpoch > 0) {
-        pts.push({ t: pEpoch, l: pLvl });
+      if (pEpoch <= 0) continue;
+
+      // If this point is a spike inside the noise window, clamp it to the
+      // previous accepted level so it doesn't create a false rise.
+      if (pts.length > 0) {
+        var prevPt = pts[pts.length - 1];
+        var pRise = pLvl - prevPt.l;
+        var pDate = new Date(pEpoch * 1000);
+        if (isSpikeReading(pDate, pRise)) {
+          pLvl = prevPt.l;   // clamp to previous clean value
+        }
       }
+
+      pts.push({ t: pEpoch, l: pLvl });
     }
 
     // Walk backwards through pts to find the most recent fill session end
