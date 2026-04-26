@@ -35,7 +35,7 @@ var FILL_RISE_THRESHOLD = 2.0;
 
 // Noise window: 06:30 – 08:30 local time (hours as decimals)
 var NOISE_WINDOW_START = 6.5;   // 06:30
-var NOISE_WINDOW_END   = 8.5;   // 08:30
+var NOISE_WINDOW_END   = 9.0;   // 09:00
 
 // Max rise (%) per reading that is still considered gradual inside the noise window
 var NOISE_MAX_GRADUAL_RISE = 5.0;
