@@ -1489,10 +1489,13 @@
       // Stat bars
       const sig = Math.min(100, Math.max(0, (100 + ((d.rssi || 0)))));
       document.getElementById('sRssiBar').style.width = sig + '%';
-      // Fill
+      // Fill — suppress during noise window (06:30–09:00) to hide sensor spikes
       const tc = document.getElementById('tankCard');
       const fb = document.getElementById('fillBox');
-      if (d.filling) {
+      const _now = new Date();
+      const _h = _now.getHours() + _now.getMinutes() / 60;
+      const _inNoiseWindow = _h >= 6.5 && _h < 9.0;
+      if (d.filling && !_inNoiseWindow) {
         tc.classList.add('filling-active');
         fb.classList.add('active'); fb.style.display = 'block';
         document.getElementById('fRate').textContent = '+' + (d.fillRate || 0).toFixed(2) + '%/min';
@@ -1638,7 +1641,33 @@
       }
       // Keep last 288 entries (24h)
       if (deduped.length > 288) deduped = deduped.slice(-288);
-      drawChart('chart24', deduped, true);
+
+      // ── Client-side spike filter (mirrors server logic) ──────
+      // The device history (/api/history) is raw and unfiltered.
+      // Apply the same noise-window spike suppression before drawing
+      // so bumps from 06:30–09:00 don't appear on the chart.
+      const NOISE_START_H = 6.5;   // 06:30
+      const NOISE_END_H   = 9.0;   // 09:00
+      const NOISE_MAX_RISE = 5.0;  // % per interval — gradual rises still allowed
+
+      let cleaned = [];
+      for (let i = 0; i < deduped.length; i++) {
+        let lvl = deduped[i].l;
+        if (cleaned.length > 0) {
+          const prev = cleaned[cleaned.length - 1];
+          const rise = lvl - prev.l;
+          if (rise > 0) {
+            const d = new Date(deduped[i].t * 1000);
+            const h = d.getHours() + d.getMinutes() / 60;
+            if (h >= NOISE_START_H && h < NOISE_END_H && rise >= NOISE_MAX_RISE) {
+              lvl = prev.l; // clamp spike to previous clean value
+            }
+          }
+        }
+        cleaned.push({ t: deduped[i].t, l: lvl });
+      }
+
+      drawChart('chart24', cleaned, true);
     }
     async function fetchHist() {
       try {
