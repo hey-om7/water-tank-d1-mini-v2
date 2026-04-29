@@ -33,15 +33,20 @@
 // Minimum level rise (%) between two consecutive rows to count as filling
 var FILL_RISE_THRESHOLD = 2.0;
 
-// Noise window: 06:30 – 08:30 local time (hours as decimals)
+// Noise window: 06:30 – 09:00 local time (hours as decimals)
 var NOISE_WINDOW_START = 6.5;   // 06:30
 var NOISE_WINDOW_END   = 9.0;   // 09:00
 
-// Max rise (%) per reading that is still considered gradual inside the noise window
-var NOISE_MAX_GRADUAL_RISE = 5.0;
+// Inside the noise window, a rise is only accepted if it is gradual.
+// We compare the incoming value against the MEDIAN of the last
+// NOISE_LOOKBACK clean readings (not just the immediately previous row).
+// This prevents a partially-passed spike from raising the baseline and
+// letting the next spike sneak through.
+var NOISE_MAX_GRADUAL_RISE = 5.0;  // % above the rolling median
+var NOISE_LOOKBACK         = 5;    // how many recent clean values to median
 
 /**
- * Returns true if the given Date falls inside the noise window (06:30–08:30).
+ * Returns true if the given Date falls inside the noise window (06:30–09:00).
  * Uses the spreadsheet's local timezone automatically (Apps Script Date is local).
  */
 function isInNoiseWindow(date) {
@@ -50,12 +55,34 @@ function isInNoiseWindow(date) {
 }
 
 /**
- * Returns true if a level rise should be treated as a spike and discarded.
- * Only fires inside the noise window; outside it always returns false.
+ * Compute the median of a numeric array.
  */
-function isSpikeReading(date, rise) {
-  if (!isInNoiseWindow(date)) return false;          // outside window → never a spike
-  return rise >= NOISE_MAX_GRADUAL_RISE;             // inside window → spike if rise ≥ 5%
+function median(arr) {
+  if (arr.length === 0) return 0;
+  var sorted = arr.slice().sort(function(a, b) { return a - b; });
+  var mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/**
+ * Returns true if a level value should be treated as a spike and discarded.
+ *
+ * @param {Date}   date       - timestamp of the incoming reading
+ * @param {number} value      - the incoming level value
+ * @param {number[]} recentClean - array of the last N accepted clean values
+ *                               (most recent last). Used as the stable baseline.
+ *
+ * Outside the noise window always returns false.
+ * Inside the noise window, fires when value exceeds
+ * median(recentClean) + NOISE_MAX_GRADUAL_RISE.
+ */
+function isSpikeReading(date, value, recentClean) {
+  if (!isInNoiseWindow(date)) return false;
+  if (recentClean.length === 0) return false;
+  var baseline = median(recentClean);
+  return (value - baseline) >= NOISE_MAX_GRADUAL_RISE;
 }
 
 function doPost(e) {
@@ -83,21 +110,35 @@ function doPost(e) {
     var currentLevel = Number(data.level) || 0;
 
     // ── Determine "Is Filling" from level rise, not from device flag ──
-    // Read the previous row's level (column B) to compare.
     var isFillingValue = "No";
     var lastRow = sheet.getLastRow();
     if (lastRow >= 2) {
       var prevLevel = parseFloat(sheet.getRange(lastRow, 2).getValue()) || 0;
       var rise = currentLevel - prevLevel;
 
-      // ── Noise-window spike filter ──────────────────────────
-      // If this reading arrives during 06:30–08:30 AND the jump is ≥ 5%,
-      // it is a sensor spike: clamp the stored level to the previous value
-      // so the sheet stays clean, and force Is Filling = "No".
+      // ── Noise-window spike filter (rolling-median baseline) ────────
+      // Read the last NOISE_LOOKBACK clean values from the sheet to build
+      // a stable baseline. Comparing against a median of recent values
+      // prevents a partially-passed spike from raising the baseline and
+      // letting the next spike sneak through.
       var now = new Date();
-      if (isSpikeReading(now, rise)) {
-        currentLevel = prevLevel;   // clamp — don't store the bad value
-        rise = 0;
+      if (isInNoiseWindow(now)) {
+        var lookbackCount = Math.min(NOISE_LOOKBACK, lastRow - 1);
+        var lookbackStart = lastRow - lookbackCount + 1;
+        var recentRange = sheet.getRange(lookbackStart, 2, lookbackCount, 1);
+        var recentVals = recentRange.getValues();
+        var recentClean = [];
+        for (var ri = 0; ri < recentVals.length; ri++) {
+          var rv = parseFloat(recentVals[ri][0]);
+          if (!isNaN(rv)) recentClean.push(rv);
+        }
+
+        if (isSpikeReading(now, currentLevel, recentClean)) {
+          // Clamp to the median of recent clean values — more stable than
+          // just using the immediately previous row.
+          currentLevel = median(recentClean);
+          rise = currentLevel - prevLevel;
+        }
       }
 
       if (rise >= FILL_RISE_THRESHOLD) {
@@ -175,6 +216,7 @@ function doGet(e) {
     var values = range.getValues();
 
     var result = [];
+    var resultRecentClean = []; // rolling baseline — only populated near/in noise window
     for (var i = 0; i < values.length; i++) {
       var timestamp = values[i][0];
       var level = values[i][1];
@@ -189,14 +231,29 @@ function doGet(e) {
       var lvl = parseFloat(level) || 0;
       if (epochSec <= 0) continue;
 
-      // Apply noise-window spike filter to chart data as well
-      if (result.length > 0) {
-        var prevResult = result[result.length - 1];
-        var rRise = lvl - prevResult.l;
-        var rDate = new Date(epochSec * 1000);
-        if (isSpikeReading(rDate, rRise)) {
-          lvl = prevResult.l;   // clamp spike to previous clean value
+      var rDate = new Date(epochSec * 1000);
+      var rH = rDate.getHours() + rDate.getMinutes() / 60;
+
+      // Keep the rolling baseline fresh: only include readings from the
+      // 30-minute pre-window buffer or inside the window itself.
+      // Outside that range, clear it so stale afternoon/evening values
+      // don't pollute tomorrow's baseline.
+      var rInOrNearWindow = (rH >= (NOISE_WINDOW_START - 0.5) && rH < NOISE_WINDOW_END);
+      if (!rInOrNearWindow) {
+        resultRecentClean = []; // reset — not near the noise window
+      }
+
+      // Apply noise-window spike filter (only fires inside window)
+      if (resultRecentClean.length > 0) {
+        if (isSpikeReading(rDate, lvl, resultRecentClean)) {
+          lvl = median(resultRecentClean);
         }
+      }
+
+      // Add to rolling baseline only when near/in the window
+      if (rInOrNearWindow) {
+        resultRecentClean.push(lvl);
+        if (resultRecentClean.length > NOISE_LOOKBACK) resultRecentClean.shift();
       }
 
       result.push({ t: epochSec, l: lvl });
@@ -214,24 +271,33 @@ function doGet(e) {
     var scanValues = scanRange.getValues();
 
     // Build a flat array of { epochSec, level } for easier processing.
-    // Apply the same noise-window spike filter used in doPost so that
-    // historical spike rows don't trigger false fill-session detection.
+    // Apply the rolling-median spike filter so historical spike rows
+    // don't trigger false fill-session detection.
     var pts = [];
+    var ptsRecentClean = []; // rolling baseline — only populated near/in noise window
     for (var p = 0; p < scanValues.length; p++) {
       var pTs = scanValues[p][0];
       var pEpoch = (pTs instanceof Date) ? Math.floor(pTs.getTime() / 1000) : Math.floor(pTs);
       var pLvl = parseFloat(scanValues[p][1]) || 0;
       if (pEpoch <= 0) continue;
 
-      // If this point is a spike inside the noise window, clamp it to the
-      // previous accepted level so it doesn't create a false rise.
-      if (pts.length > 0) {
-        var prevPt = pts[pts.length - 1];
-        var pRise = pLvl - prevPt.l;
-        var pDate = new Date(pEpoch * 1000);
-        if (isSpikeReading(pDate, pRise)) {
-          pLvl = prevPt.l;   // clamp to previous clean value
+      var pDate = new Date(pEpoch * 1000);
+      var pH = pDate.getHours() + pDate.getMinutes() / 60;
+      var pInOrNearWindow = (pH >= (NOISE_WINDOW_START - 0.5) && pH < NOISE_WINDOW_END);
+
+      if (!pInOrNearWindow) {
+        ptsRecentClean = [];
+      }
+
+      if (ptsRecentClean.length > 0) {
+        if (isSpikeReading(pDate, pLvl, ptsRecentClean)) {
+          pLvl = median(ptsRecentClean);
         }
+      }
+
+      if (pInOrNearWindow) {
+        ptsRecentClean.push(pLvl);
+        if (ptsRecentClean.length > NOISE_LOOKBACK) ptsRecentClean.shift();
       }
 
       pts.push({ t: pEpoch, l: pLvl });
@@ -301,9 +367,9 @@ function doGet(e) {
     var usageValues = usageRange.getValues();
 
     // Build per-day arrays of clean (spike-filtered) level readings
-    var dailyReadings = {};   // { "YYYY-MM-DD": [ { t, l }, ... ] }
+    var dailyReadings = {};   // { "YYYY-MM-DD": { readings: [], ts } }
     var uPrevLvl = null;
-    var uPrevEpoch = null;
+    var uRecentClean = [];    // rolling baseline — only populated near/in noise window
 
     for (var i = 0; i < usageValues.length; i++) {
       var uTs = usageValues[i][0];
@@ -319,23 +385,35 @@ function doGet(e) {
       }
       if (uEpoch <= 0) continue;
 
-      // Apply noise-window spike filter: clamp to previous clean level
       var uDate = new Date(uEpoch * 1000);
-      if (uPrevLvl !== null) {
-        var uRise = uLvl - uPrevLvl;
-        if (isSpikeReading(uDate, uRise)) {
-          uLvl = uPrevLvl;
+      var uH = uDate.getHours() + uDate.getMinutes() / 60;
+      var uInOrNearWindow = (uH >= (NOISE_WINDOW_START - 0.5) && uH < NOISE_WINDOW_END);
+
+      // Reset the rolling baseline whenever we're outside the noise window
+      // so stale values from the rest of the day don't pollute the baseline
+      if (!uInOrNearWindow) {
+        uRecentClean = [];
+      }
+
+      // Apply noise-window spike filter (isSpikeReading returns false outside window)
+      if (uRecentClean.length > 0) {
+        if (isSpikeReading(uDate, uLvl, uRecentClean)) {
+          uLvl = median(uRecentClean);
         }
       }
 
       // Also reject any single-interval drop > 30% as a sensor glitch
-      // (a real tank cannot drain 30% in 5 minutes)
       if (uPrevLvl !== null && (uPrevLvl - uLvl) > 30) {
         uLvl = uPrevLvl;
       }
 
       uPrevLvl = uLvl;
-      uPrevEpoch = uEpoch;
+
+      // Only maintain the rolling window when near/in the noise window
+      if (uInOrNearWindow) {
+        uRecentClean.push(uLvl);
+        if (uRecentClean.length > NOISE_LOOKBACK) uRecentClean.shift();
+      }
 
       var y = uDate.getFullYear();
       var mo = ('0' + (uDate.getMonth() + 1)).slice(-2);
