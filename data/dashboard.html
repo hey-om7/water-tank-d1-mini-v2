@@ -1381,6 +1381,22 @@
         <div class="form-group"><label>Webhook URL</label><input type="url" id="cfgHook"
             placeholder="https://script.google.com/macros/s/..."></div>
       </div>
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-hdr"><i style="background:rgba(255,190,46,.12);color:var(--yellow)"><svg viewBox="0 0 24 24"
+              width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+            </svg></i>Spike Filter Calibration</div>
+        <div style="font-size:.72rem;color:var(--text2);margin-bottom:12px;line-height:1.5">
+          The spike filter builds a rolling baseline from recent readings to reject sudden bad values.
+          If the sensor was moved or recalibrated, the old baseline may cause good readings to be clamped.
+          Reset it so the filter re-learns from the next few readings.
+        </div>
+        <button class="btn" style="background:linear-gradient(135deg,var(--yellow),#f59e0b);color:#000;width:100%" onclick="resetCalibration()">
+          Reset Calibration Baseline
+        </button>
+        <div id="calStatus" style="font-size:.68rem;color:var(--text3);margin-top:8px;text-align:center"></div>
+      </div>
       <div class="btn-row">
         <button class="btn btn-p" onclick="saveCfg()">Save Settings</button>
         <button class="btn btn-d" onclick="showRstModal()">Factory Reset</button>
@@ -1489,13 +1505,10 @@
       // Stat bars
       const sig = Math.min(100, Math.max(0, (100 + ((d.rssi || 0)))));
       document.getElementById('sRssiBar').style.width = sig + '%';
-      // Fill — suppress during noise window (06:30–09:00) to hide sensor spikes
+      // Fill
       const tc = document.getElementById('tankCard');
       const fb = document.getElementById('fillBox');
-      const _now = new Date();
-      const _h = _now.getHours() + _now.getMinutes() / 60;
-      const _inNoiseWindow = _h >= 6.5 && _h < 9.0;
-      if (d.filling && !_inNoiseWindow) {
+      if (d.filling) {
         tc.classList.add('filling-active');
         fb.classList.add('active'); fb.style.display = 'block';
         document.getElementById('fRate').textContent = '+' + (d.fillRate || 0).toFixed(2) + '%/min';
@@ -1642,27 +1655,33 @@
       // Keep last 288 entries (24h)
       if (deduped.length > 288) deduped = deduped.slice(-288);
 
-      // ── Client-side spike filter (mirrors server logic) ──────
-      // The device history (/api/history) is raw and unfiltered.
-      // Apply the same noise-window spike suppression before drawing
-      // so bumps from 06:30–09:00 don't appear on the chart.
-      const NOISE_START_H = 6.5;   // 06:30
-      const NOISE_END_H   = 9.0;   // 09:00
-      const NOISE_MAX_RISE = 5.0;  // % per interval — gradual rises still allowed
+      // ── Client-side spike filter (all-day, mirrors server logic) ──
+      // Applies the same rolling-median spike filter used in the Apps Script
+      // so raw device history readings are cleaned before rendering.
+      const SPIKE_MAX_DELTA = 10.0;
+      const SPIKE_LOOKBACK  = 6;
 
+      function clientMedian(arr) {
+        if (!arr.length) return null;
+        const s = arr.slice().sort((a, b) => a - b);
+        const m = Math.floor(s.length / 2);
+        return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2;
+      }
+
+      let baseline = [];
       let cleaned = [];
       for (let i = 0; i < deduped.length; i++) {
         let lvl = deduped[i].l;
-        if (cleaned.length > 0) {
-          const prev = cleaned[cleaned.length - 1];
-          const rise = lvl - prev.l;
-          if (rise > 0) {
-            const d = new Date(deduped[i].t * 1000);
-            const h = d.getHours() + d.getMinutes() / 60;
-            if (h >= NOISE_START_H && h < NOISE_END_H && rise >= NOISE_MAX_RISE) {
-              lvl = prev.l; // clamp spike to previous clean value
-            }
+        if (baseline.length >= 2) {
+          const med = clientMedian(baseline);
+          if (Math.abs(lvl - med) > SPIKE_MAX_DELTA) {
+            lvl = med; // clamp spike — don't update baseline
+          } else {
+            baseline.push(lvl);
+            if (baseline.length > SPIKE_LOOKBACK) baseline.shift();
           }
+        } else {
+          baseline.push(lvl);
         }
         cleaned.push({ t: deduped[i].t, l: lvl });
       }
@@ -1873,6 +1892,37 @@
     function hideRstModal() { document.getElementById('rstModal').classList.remove('open') }
     async function doRst() { hideRstModal(); try { await fetch('/api/reset', { method: 'POST' }); toast('Resetting...', 'ok'); } catch (e) { toast('Reset sent', 'ok'); } }
     function toast(m, t) { const e = document.getElementById('toast'); e.textContent = m; e.className = 'toast ' + t + ' show'; setTimeout(() => e.className = 'toast', 3000); }
+
+    async function resetCalibration() {
+      const statusEl = document.getElementById('calStatus');
+      statusEl.textContent = 'Resetting...';
+      try {
+        if (!webhookUrl) {
+          const cr = await fetch('/api/config');
+          const cd = await cr.json();
+          webhookUrl = cd.webhook || '';
+        }
+        if (!webhookUrl || webhookUrl.length < 10) {
+          statusEl.textContent = 'No webhook URL configured.';
+          return;
+        }
+        // Append ?action=resetCalibration — Apps Script doGet handles this
+        const url = webhookUrl + (webhookUrl.includes('?') ? '&' : '?') + 'action=resetCalibration';
+        const r = await fetch(url);
+        const d = await r.json();
+        if (d.status === 'ok') {
+          statusEl.style.color = 'var(--green)';
+          statusEl.textContent = 'Baseline reset. Filter will re-learn from next readings.';
+          toast('Calibration reset!', 'ok');
+        } else {
+          statusEl.style.color = 'var(--red)';
+          statusEl.textContent = 'Error: ' + (d.message || 'unknown');
+        }
+      } catch (err) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = 'Connection error.';
+      }
+    }
   </script>
 </body>
 
