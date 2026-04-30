@@ -15,106 +15,185 @@
  * IMPORTANT: After any code changes, you MUST create a New Version:
  *   Deploy > Manage deployments > Edit (pencil) > Version: New version > Deploy
  *
- * SPIKE FILTER (all day, every reading):
- * - Every incoming reading is compared against the rolling median of the
- *   last SPIKE_LOOKBACK accepted clean values.
- * - If the new value deviates from that median by more than SPIKE_MAX_DELTA
- *   in either direction (sudden jump up OR sudden drop), it is clamped to
- *   the median — it is NOT stored as-is.
- * - This runs 24 hours a day, not just during a specific time window.
- * - Gradual real changes (tank filling or draining slowly) pass through
- *   because each small step updates the median incrementally.
+ * SERVER-SIDE FILTRATION PIPELINE (applied to every incoming reading):
+ *
+ *  Stage 1 — Velocity Clamp (3.0 %/interval)
+ *    Hard-blocks any single-interval change that is physically impossible.
+ *    Both rises and drops are clamped symmetrically.
+ *
+ *  Stage 2 — Fine Hysteresis Deadzone (0.5 %)
+ *    If the clamped change is smaller than 0.5 %, the stored value is kept
+ *    completely flat. Eliminates micro-jitter on an idle tank.
+ *
+ *  Stage 3 — Temporal Validation (0.5 % – 1.5 % zone)
+ *    Changes in the 0.5–1.5 % band are held as "pending" for one interval.
+ *    They are only committed if the NEXT reading also moves in the same
+ *    direction, confirming the change is real and not a surface ripple.
+ *    Changes > 1.5 % (after the velocity clamp) are committed immediately.
+ *
+ *  Stage 4 — EMA Smoothing (α = 0.4)
+ *    The committed value is blended into the historical trend:
+ *      smoothed = 0.4 × committed + 0.6 × previous
+ *    Produces a smooth, organic graph curve.
  *
  * FILLING DETECTION:
- * - "Is Filling" = "Yes" when the accepted (post-filter) level rose ≥ 2%
- *   from the previous row.
+ *  "Is Filling" = "Yes" only when the EMA-smoothed level has risen by ≥ 3 %
+ *  across at least 2 consecutive 5-minute windows (monotonically rising).
  *
  * CALIBRATION RESET:
- * - GET ?action=resetCalibration clears the stored baseline so the filter
- *   re-seeds itself from the next few real readings.
- *   Use the "Reset Calibration" button in the dashboard config panel.
+ *  GET ?action=resetCalibration deletes ALL ScriptProperties so the filter
+ *  re-homes to the raw sensor value on the very next check-in, bypassing
+ *  all stages until the baseline is re-established.
  */
 
-// ── Spike filter constants ────────────────────────────────────────────────────
-// Max deviation (%) from the rolling median that is accepted as a real change.
-// A single reading that jumps more than this in either direction is clamped.
-// Set high enough that a real fast fill (tank filling in ~30 min) still passes:
-//   30% fill over 6 readings = ~5%/reading → threshold of 10 gives headroom.
-var SPIKE_MAX_DELTA = 10.0;
+// ── Pipeline constants ────────────────────────────────────────────────────────
 
-// How many recent accepted values to include in the rolling median baseline.
-var SPIKE_LOOKBACK = 6;
+var VELOCITY_CLAMP        = 3.0;  // Max change (%) per 5-min interval (rise or drop)
+var HYSTERESIS_DEADZONE   = 0.5;  // Changes smaller than this are ignored (kept flat)
+var TEMPORAL_LOWER        = 0.5;  // Bottom of the temporal validation band (%)
+var TEMPORAL_UPPER        = 1.5;  // Top of the temporal validation band (%)
+var EMA_ALPHA             = 0.4;  // EMA blend factor (0 = no update, 1 = raw value)
 
-// Minimum level rise (%) between two consecutive rows to count as filling.
-var FILL_RISE_THRESHOLD = 2.0;
+// ── Filling detection constants ───────────────────────────────────────────────
 
-// Name of the Apps Script property used to persist the baseline across requests.
-var BASELINE_PROP = 'spikeBaseline';
+var FILL_MIN_RISE_TOTAL   = 3.0;  // Total rise (%) required to declare filling
+var FILL_MIN_CONSECUTIVE  = 2;    // Consecutive rising windows required
+var FILL_RISE_THRESHOLD   = 2.0;  // Min rise per row for fill-session scan in doGet
+
+// ── Script Properties keys ────────────────────────────────────────────────────
+
+var PROP_LAST_LEVEL   = 'lastAcceptedLevel';  // EMA-smoothed level persisted between posts
+var PROP_PENDING      = 'pendingChange';       // Pending temporal-validation value
+var PROP_RISE_BUFFER  = 'riseBuffer';          // Recent levels for filling detection
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function loadProp(key, defaultVal) {
+  var raw = PropertiesService.getScriptProperties().getProperty(key);
+  if (raw === null) return defaultVal;
+  try { return JSON.parse(raw); } catch (e) { return defaultVal; }
+}
+
+function saveProp(key, val) {
+  PropertiesService.getScriptProperties().setProperty(key, JSON.stringify(val));
+}
+
 function calcMedian(arr) {
-  if (arr.length === 0) return null;
-  var sorted = arr.slice().sort(function(a, b) { return a - b; });
-  var mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 !== 0
-    ? sorted[mid]
-    : (sorted[mid - 1] + sorted[mid]) / 2;
+  if (!arr || arr.length === 0) return null;
+  var s = arr.slice().sort(function(a, b) { return a - b; });
+  var m = Math.floor(s.length / 2);
+  return s.length % 2 !== 0 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 /**
- * Load the persisted rolling baseline from Script Properties.
- * Returns an array of up to SPIKE_LOOKBACK numbers, or [] if not set.
- */
-function loadBaseline() {
-  var raw = PropertiesService.getScriptProperties().getProperty(BASELINE_PROP);
-  if (!raw) return [];
-  try {
-    var arr = JSON.parse(raw);
-    return Array.isArray(arr) ? arr : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-/**
- * Persist the rolling baseline to Script Properties.
- */
-function saveBaseline(arr) {
-  PropertiesService.getScriptProperties().setProperty(
-    BASELINE_PROP, JSON.stringify(arr.slice(-SPIKE_LOOKBACK))
-  );
-}
-
-/**
- * Given a candidate level value and the current rolling baseline array,
- * returns the accepted (possibly clamped) value and the updated baseline.
+ * Run the full 4-stage pipeline on a raw incoming level value.
  *
- * Logic:
- *  - If baseline is empty (first readings after reset), accept as-is and seed.
- *  - If |value - median(baseline)| > SPIKE_MAX_DELTA → spike: clamp to median.
- *  - Otherwise accept the value and push it into the baseline.
+ * @param {number}      rawLevel   - incoming level from device (already a
+ *                                   firmware-side median of 5 readings)
+ * @param {number|null} lastLevel  - previous EMA-smoothed stored level
+ * @param {object|null} pending    - { value, direction } or null
+ *
+ * @returns {{ committed: number, newPending: object|null }}
+ *   committed  — the value to store and EMA-blend (null = keep lastLevel flat)
+ *   newPending — updated pending state to persist
  */
-function applySpikeFiler(value, baseline) {
-  if (baseline.length < 2) {
-    // Not enough history yet — accept and seed
-    var newBaseline = baseline.concat([value]);
-    if (newBaseline.length > SPIKE_LOOKBACK) newBaseline.shift();
-    return { accepted: value, baseline: newBaseline };
+function runPipeline(rawLevel, lastLevel, pending) {
+
+  // ── Stage 1: Velocity Clamp ───────────────────────────────
+  var clamped;
+  if (lastLevel === null) {
+    // First reading after reset — accept raw directly, skip all stages
+    return { committed: rawLevel, newPending: null };
   }
 
-  var med = calcMedian(baseline);
-  var delta = Math.abs(value - med);
-
-  if (delta > SPIKE_MAX_DELTA) {
-    // Spike detected — clamp to median, do NOT update baseline with bad value
-    return { accepted: med, baseline: baseline.slice() };
+  var delta = rawLevel - lastLevel;
+  if (delta > VELOCITY_CLAMP) {
+    clamped = lastLevel + VELOCITY_CLAMP;
+  } else if (delta < -VELOCITY_CLAMP) {
+    clamped = lastLevel - VELOCITY_CLAMP;
+  } else {
+    clamped = rawLevel;
   }
 
-  // Clean value — accept and update baseline
-  var newBaseline = baseline.concat([value]);
-  if (newBaseline.length > SPIKE_LOOKBACK) newBaseline.shift();
-  return { accepted: value, baseline: newBaseline };
+  var clampedDelta = clamped - lastLevel;
+  var absDelta = Math.abs(clampedDelta);
+
+  // ── Stage 2: Hysteresis Deadzone ─────────────────────────
+  if (absDelta < HYSTERESIS_DEADZONE) {
+    // Change too small — keep flat, clear any pending
+    return { committed: null, newPending: null };
+  }
+
+  // ── Stage 3: Temporal Validation ─────────────────────────
+  if (absDelta >= TEMPORAL_LOWER && absDelta < TEMPORAL_UPPER) {
+    // In the validation band — needs confirmation from next window
+    var direction = clampedDelta > 0 ? 1 : -1;
+
+    if (pending !== null && pending.direction === direction) {
+      // Same direction confirmed — commit the pending value
+      var confirmed = pending.value;
+      return { committed: confirmed, newPending: null };
+    } else {
+      // First time seeing this change — hold as pending
+      return { committed: null, newPending: { value: clamped, direction: direction } };
+    }
+  }
+
+  // ── Change > TEMPORAL_UPPER: commit immediately ───────────
+  // (already passed velocity clamp, so this is a real significant change)
+  return { committed: clamped, newPending: null };
+}
+
+/**
+ * Apply EMA blend.
+ * @param {number} committed  - new committed value
+ * @param {number} lastLevel  - previous EMA level
+ * @returns {number} smoothed value
+ */
+function applyEMA(committed, lastLevel) {
+  if (lastLevel === null) return committed;
+  return EMA_ALPHA * committed + (1 - EMA_ALPHA) * lastLevel;
+}
+
+/**
+ * Determine whether the current level constitutes "Is Filling".
+ * Requires FILL_MIN_CONSECUTIVE consecutive rising windows with
+ * a total rise of at least FILL_MIN_RISE_TOTAL.
+ */
+function isFillingNow(currentLevel, riseBuffer) {
+  if (riseBuffer.length < FILL_MIN_CONSECUTIVE) return false;
+
+  var window = riseBuffer.concat([currentLevel]);
+  var start = window.length - FILL_MIN_CONSECUTIVE - 1;
+  if (start < 0) start = 0;
+  var slice = window.slice(start);
+
+  for (var i = 1; i < slice.length; i++) {
+    if (slice[i] <= slice[i - 1]) return false;
+  }
+
+  return (slice[slice.length - 1] - slice[0]) >= FILL_MIN_RISE_TOTAL;
+}
+
+/**
+ * Apply the pipeline to a historical level value for doGet chart cleaning.
+ * Uses a simplified version (velocity clamp + EMA only — no temporal state).
+ */
+function applyReadFilter(rawValue, lastAccepted) {
+  if (lastAccepted === null) return rawValue;
+
+  var delta = rawValue - lastAccepted;
+  var clamped;
+  if (delta > VELOCITY_CLAMP) {
+    clamped = lastAccepted + VELOCITY_CLAMP;
+  } else if (delta < -VELOCITY_CLAMP) {
+    clamped = lastAccepted - VELOCITY_CLAMP;
+  } else {
+    clamped = rawValue;
+  }
+
+  // Apply EMA
+  return EMA_ALPHA * clamped + (1 - EMA_ALPHA) * lastAccepted;
 }
 
 // ── doPost ────────────────────────────────────────────────────────────────────
@@ -141,21 +220,37 @@ function doPost(e) {
 
     var rawLevel = Number(data.level) || 0;
 
-    // ── All-day spike filter ──────────────────────────────────
-    var baseline = loadBaseline();
-    var filtered = applySpikeFiler(rawLevel, baseline);
-    var currentLevel = filtered.accepted;
-    saveBaseline(filtered.baseline);
+    // Load persisted state
+    var lastLevel  = loadProp(PROP_LAST_LEVEL,  null);
+    var pending    = loadProp(PROP_PENDING,     null);
+    var riseBuffer = loadProp(PROP_RISE_BUFFER, []);
 
-    // ── Is Filling from accepted level rise ───────────────────
-    var isFillingValue = 'No';
-    var lastRow = sheet.getLastRow();
-    if (lastRow >= 2) {
-      var prevLevel = parseFloat(sheet.getRange(lastRow, 2).getValue()) || 0;
-      if (currentLevel - prevLevel >= FILL_RISE_THRESHOLD) {
-        isFillingValue = 'Yes';
-      }
+    // ── Run 4-stage pipeline ──────────────────────────────────
+    var result = runPipeline(rawLevel, lastLevel, pending);
+
+    var currentLevel;
+    if (result.committed !== null) {
+      // Blend committed value through EMA
+      currentLevel = applyEMA(result.committed, lastLevel);
+    } else {
+      // Deadzone or pending — keep previous level flat
+      currentLevel = (lastLevel !== null) ? lastLevel : rawLevel;
     }
+
+    // Round to 1 decimal to prevent floating-point drift
+    currentLevel = Math.round(currentLevel * 10) / 10;
+
+    // Persist updated state
+    saveProp(PROP_LAST_LEVEL, currentLevel);
+    saveProp(PROP_PENDING,    result.newPending);
+
+    // ── Filling detection ─────────────────────────────────────
+    var filling = isFillingNow(currentLevel, riseBuffer);
+    riseBuffer.push(currentLevel);
+    if (riseBuffer.length > FILL_MIN_CONSECUTIVE + 1) riseBuffer.shift();
+    saveProp(PROP_RISE_BUFFER, riseBuffer);
+
+    var isFillingValue = filling ? 'Yes' : 'No';
 
     // Append row
     sheet.appendRow([
@@ -187,15 +282,21 @@ function doPost(e) {
 /**
  * Handles two actions:
  *   GET (no params)              → return chart data, lastFilled, usage7d
- *   GET ?action=resetCalibration → clear the persisted spike-filter baseline
+ *   GET ?action=resetCalibration → wipe ALL ScriptProperties so the filter
+ *                                  re-homes to raw sensor value immediately
  */
 function doGet(e) {
   try {
     // ── Calibration reset ─────────────────────────────────────
     if (e && e.parameter && e.parameter.action === 'resetCalibration') {
-      PropertiesService.getScriptProperties().deleteProperty(BASELINE_PROP);
+      // Delete ALL properties — not just named ones — so no stale state
+      // can interfere with the fresh baseline after reset.
+      PropertiesService.getScriptProperties().deleteAllProperties();
       return ContentService
-        .createTextOutput(JSON.stringify({ status: 'ok', message: 'Calibration baseline reset.' }))
+        .createTextOutput(JSON.stringify({
+          status: 'ok',
+          message: 'All calibration state cleared. Filter will re-home to raw sensor value on next check-in.'
+        }))
         .setMimeType(ContentService.MimeType.JSON);
     }
 
@@ -209,9 +310,8 @@ function doGet(e) {
     }
 
     // ── 24-h trend chart data ─────────────────────────────────
-    // Re-apply the spike filter over the stored values so that any rows
-    // written before this script version (or during a baseline gap) are
-    // also cleaned before being sent to the dashboard.
+    // Re-apply velocity clamp + EMA over stored rows so historical spikes
+    // that slipped through before this version are cleaned for the chart.
     var maxRows = 288;
     var startRow = Math.max(2, lastRow - maxRows + 1);
     var numRows = lastRow - startRow + 1;
@@ -219,7 +319,7 @@ function doGet(e) {
     var values = range.getValues();
 
     var result = [];
-    var resultBaseline = [];
+    var resultLast = null;
     for (var i = 0; i < values.length; i++) {
       var timestamp = values[i][0];
       var level = values[i][1];
@@ -233,14 +333,14 @@ function doGet(e) {
       if (epochSec <= 0) continue;
 
       var lvl = parseFloat(level) || 0;
-      var rf = applySpikeFiler(lvl, resultBaseline);
-      lvl = rf.accepted;
-      resultBaseline = rf.baseline;
+      lvl = applyReadFilter(lvl, resultLast);
+      lvl = Math.round(lvl * 10) / 10;
+      resultLast = lvl;
 
       result.push({ t: epochSec, l: lvl });
     }
 
-    // ── Last fill session (level-rise based, spike-filtered) ──
+    // ── Last fill session (level-rise based) ──────────────────
     var lastFilled = null;
     var scanRows = Math.min(1000, lastRow - 1);
     var scanStart = Math.max(2, lastRow - scanRows + 1);
@@ -248,16 +348,16 @@ function doGet(e) {
     var scanValues = scanRange.getValues();
 
     var pts = [];
-    var ptsBaseline = [];
+    var ptsLast = null;
     for (var p = 0; p < scanValues.length; p++) {
       var pTs = scanValues[p][0];
       var pEpoch = (pTs instanceof Date) ? Math.floor(pTs.getTime() / 1000) : Math.floor(pTs);
       var pLvl = parseFloat(scanValues[p][1]) || 0;
       if (pEpoch <= 0) continue;
 
-      var pf = applySpikeFiler(pLvl, ptsBaseline);
-      pLvl = pf.accepted;
-      ptsBaseline = pf.baseline;
+      pLvl = applyReadFilter(pLvl, ptsLast);
+      pLvl = Math.round(pLvl * 10) / 10;
+      ptsLast = pLvl;
 
       pts.push({ t: pEpoch, l: pLvl });
     }
@@ -281,8 +381,8 @@ function doGet(e) {
         }
       }
 
-      var fromLevel = pts[sessionStartIdx - 1].l;
-      var toLevel   = pts[sessionEndIdx].l;
+      var fromLevel  = pts[sessionStartIdx - 1].l;
+      var toLevel    = pts[sessionEndIdx].l;
       var startEpoch = pts[sessionStartIdx].t;
       var endEpoch   = pts[sessionEndIdx].t;
       var durationMin = Math.max(1, Math.round((endEpoch - startEpoch) / 60));
@@ -302,7 +402,7 @@ function doGet(e) {
       };
     }
 
-    // ── 7-day usage (peak-to-trough per day, spike-filtered) ──
+    // ── 7-day usage (peak-to-trough per day) ──────────────────
     var usageRows = Math.min(2500, lastRow - 1);
     var usageStart = Math.max(2, lastRow - usageRows + 1);
     var usageRange = sheet.getRange(usageStart, 1, lastRow - usageStart + 1, 2);
@@ -310,7 +410,6 @@ function doGet(e) {
 
     var dailyReadings = {};
     var uPrevLvl = null;
-    var uBaseline = [];
 
     for (var i = 0; i < usageValues.length; i++) {
       var uTs = usageValues[i][0];
@@ -326,19 +425,17 @@ function doGet(e) {
       }
       if (uEpoch <= 0) continue;
 
-      // Spike filter
-      var uf = applySpikeFiler(uLvl, uBaseline);
-      uLvl = uf.accepted;
-      uBaseline = uf.baseline;
+      uLvl = applyReadFilter(uLvl, uPrevLvl);
+      uLvl = Math.round(uLvl * 10) / 10;
 
-      // Also reject single-interval drop > 30% (sensor glitch)
+      // Extra guard: reject single-interval drop > 30% (catastrophic glitch)
       if (uPrevLvl !== null && (uPrevLvl - uLvl) > 30) {
         uLvl = uPrevLvl;
       }
       uPrevLvl = uLvl;
 
       var uDate = new Date(uEpoch * 1000);
-      var y = uDate.getFullYear();
+      var y  = uDate.getFullYear();
       var mo = ('0' + (uDate.getMonth() + 1)).slice(-2);
       var dy = ('0' + uDate.getDate()).slice(-2);
       var dayStr = y + '-' + mo + '-' + dy;
@@ -349,7 +446,7 @@ function doGet(e) {
       dailyReadings[dayStr].readings.push(uLvl);
     }
 
-    // Per-day: peak − trough-after-peak, capped at 100%
+    // Per-day: peak − trough-after-peak, capped at 100 %
     var usage7d = Object.keys(dailyReadings).sort().slice(-7).map(function(k) {
       var readings = dailyReadings[k].readings;
       if (readings.length < 2) return { day: k, drop: 0, t: dailyReadings[k].ts };

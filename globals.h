@@ -39,14 +39,15 @@
 #define MDNS_NAME "watertank"
 
 // ─── Sensor Constants ────────────────────────────────────────
-#define SENSOR_SAMPLES 7          // Odd number for median filter
-#define SENSOR_READ_INTERVAL 2000 // Internal fast read every 2s
-#define SENSOR_INTERVAL 30000     // Publish filtered value every 30s
+// Pipeline: 3-sample burst every 60s → 5 readings accumulated → median published every 5 min
+#define SENSOR_READ_INTERVAL 60000  // One 3-sample burst per minute (ms)
+#define SENSOR_INTERVAL      300000 // Publish median of 5 readings every 5 min (ms)
+#define FILTER_BUFFER_SIZE   5      // Exactly 5 slots: one per minute over 5 minutes
 
 // ─── Sensor Filtering Constants ──────────────────────────────
 #define SPIKE_THRESHOLD 5.0   // Max allowed jump (cm) from last valid
 #define EMA_ALPHA 0.3         // Exponential moving average factor (0-1)
-#define FILTER_BUFFER_SIZE 15 // Internal buffer for 30s of 2s reads
+// FILTER_BUFFER_SIZE is defined above in Sensor Constants (5 slots)
 
 // ─── Fill Detection Constants ────────────────────────────────
 #define FILL_WINDOW 10     // Lookback window (readings)

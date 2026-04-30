@@ -1,12 +1,14 @@
 /*
  * sensor_logic.h — Ultrasonic Sensor & Fill Detection
  * =====================================================
- * JSN-SR04T ultrasonic distance sensor with robust 3-stage filtering:
- *  1. Median filter (7 samples) — removes spike outliers
- *  2. Spike rejection — ignores readings >5cm from last valid
- *  3. EMA smoothing — gradual transitions, no jumps
+ * JSN-SR04T ultrasonic distance sensor with multi-stage filtration:
  *
- * Fast internal reads every 2s → published stable value every 30s.
+ * Pipeline (firmware side):
+ *  Every 60s : 3-sample burst → average → spike reject → store in 5-slot buffer
+ *  Every 5min: compute MEDIAN of the 5 buffer slots → publish to dashboard & Sheets
+ *
+ * The median eliminates any remaining outlier in the 5-minute window before
+ * the value is sent to Google Sheets for server-side EMA + hysteresis filtering.
  */
 
 #ifndef SENSOR_LOGIC_H
@@ -41,14 +43,17 @@ inline void initFilter() {
   printLog("[SENSOR] Filter initialized");
 }
 
-// ─── Read Raw Distance (Burst of 7, Average) ────────────────
-// Takes 7 samples, returns their average.
-// This provides a smoother base reading over the 2-second interval.
+// ─── Read Raw Distance (3-sample average over ~1 second) ─────
+// Takes 3 rapid samples spaced ~333ms apart (totalling ~1 second),
+// discards any out-of-range readings, and returns the average of
+// the valid ones. This averages out sub-second sensor noise before
+// the reading enters the spike-rejection and EMA pipeline.
 inline float readRawDistance() {
-  float samples[SENSOR_SAMPLES];
+  const int BURST_SAMPLES = 3;
+  float samples[BURST_SAMPLES];
   int validCount = 0;
 
-  for (int i = 0; i < SENSOR_SAMPLES; i++) {
+  for (int i = 0; i < BURST_SAMPLES; i++) {
     // Trigger pulse
     digitalWrite(TRIGGER_PIN, LOW);
     delayMicroseconds(2);
@@ -56,27 +61,24 @@ inline float readRawDistance() {
     delayMicroseconds(10);
     digitalWrite(TRIGGER_PIN, LOW);
 
-    // Read echo
-    long duration = pulseIn(ECHO_PIN, HIGH, 50000); // 50ms timeout
+    // Read echo (50ms timeout)
+    long duration = pulseIn(ECHO_PIN, HIGH, 50000);
 
     if (duration > 0) {
-      float dist = (duration * 0.0343) / 2.0; // Speed of sound = 343 m/s
-      if (dist > 2 && dist < 500) {           // Valid range: 2-500cm
+      float dist = (duration * 0.0343) / 2.0;
+      if (dist > 2 && dist < 500) {
         samples[validCount++] = dist;
       }
     }
-    delay(30); // JSN-SR04T needs ~30ms between readings
+
+    // Space samples ~333ms apart so 3 samples span ~1 second
+    if (i < BURST_SAMPLES - 1) delay(333);
   }
 
-  if (validCount == 0) {
-    return -1; // No valid readings
-  }
+  if (validCount == 0) return -1;
 
-  // Calculate and return average
   float sum = 0;
-  for (int i = 0; i < validCount; i++) {
-    sum += samples[i];
-  }
+  for (int i = 0; i < validCount; i++) sum += samples[i];
   return sum / validCount;
 }
 
@@ -176,27 +178,44 @@ inline float calculateLiters(float distance) {
   return liters * count;
 }
 
-// ─── Publish Stable Reading (called every 30s) ──────────────
-// Averages the filter buffer to produce the final stable value.
+// ─── Publish Stable Reading (called every 5 min) ────────────
+// Computes the MEDIAN of the 5-slot filter buffer and publishes it.
+// Median is more robust than average — one bad reading in the window
+// cannot shift the output, it is simply the middle value when sorted.
 inline void publishStableReading() {
   if (filterBufCount == 0) {
     printLog("[SENSOR] No valid data to publish");
     return;
   }
 
-  // Average all values in the buffer
-  float sum = 0;
-  for (int i = 0; i < filterBufCount; i++) {
-    sum += filterBuffer[i];
+  // Copy valid entries into a temporary array for sorting
+  float tmp[FILTER_BUFFER_SIZE];
+  int n = filterBufCount;
+  for (int i = 0; i < n; i++) {
+    tmp[i] = filterBuffer[i];
   }
 
-  currentDistance = sum / filterBufCount;
-  currentLevel = calculateLevel(currentDistance);
-  currentLiters = calculateLiters(currentDistance);
+  // Insertion sort (tiny array — no overhead)
+  for (int i = 1; i < n; i++) {
+    float key = tmp[i];
+    int j = i - 1;
+    while (j >= 0 && tmp[j] > key) {
+      tmp[j + 1] = tmp[j];
+      j--;
+    }
+    tmp[j + 1] = key;
+  }
 
-  printLog("[SENSOR] ─── Published: %.1f cm | %.1f%% | %.1f L (from %d "
-                "samples) ───\n",
-                currentDistance, currentLevel, currentLiters, filterBufCount);
+  // Pick the middle value (median)
+  float medianDist = tmp[n / 2];
+
+  currentDistance = medianDist;
+  currentLevel    = calculateLevel(currentDistance);
+  currentLiters   = calculateLiters(currentDistance);
+
+  printLog("[SENSOR] ─── Published (median): %.1f cm | %.1f%% | %.1f L "
+           "(from %d samples) ───\n",
+           currentDistance, currentLevel, currentLiters, n);
 }
 
 // ─── Update Fill Detection ───────────────────────────────────

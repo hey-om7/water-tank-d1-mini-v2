@@ -148,15 +148,15 @@ void loop() {
 
   unsigned long now = millis();
 
-  // ─── Fast Internal Read (every 2s) ──────────────────────────
-  // Collects filtered samples into buffer
+  // ─── 3-sample burst read (every 60s) ───────────────────────
+  // Collects one averaged+spike-rejected sample into the 5-slot buffer
   if (now - lastInternalRead >= SENSOR_READ_INTERVAL) {
     lastInternalRead = now;
     internalSensorRead();
   }
 
-  // ─── Publish Stable Reading (every 30s) ─────────────────────
-  // Averages the buffer → updates currentDistance & currentLevel
+  // ─── Publish median + log to Sheets (every 5 min) ───────────
+  // Computes median of the 5 buffer slots, updates dashboard & Sheets
   if (now - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = now;
     publishStableReading();
