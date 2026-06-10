@@ -27,20 +27,36 @@ inline void addHistoryEntry() {
 
 // ─── Log to Google Sheets ────────────────────────────────────
 inline void logToGoogleSheets() {
-  if (strlen(config.webhook) < 10)
-    return; // No webhook configured
-  if (WiFi.status() != WL_CONNECTED)
+  if (strlen(config.webhook) < 10) return; // No webhook configured
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  uint32_t freeHeap = ESP.getFreeHeap();
+  uint32_t fragPct = ESP.getHeapFragmentation();
+  printLog("[SERVER] Before log: (Free heap: %u bytes, Fragmentation: %u%%)",
+                freeHeap, fragPct);
+
+  if(freeHeap < 25000 || fragPct > 50) {
+    printLog("[SERVER] Warning: Low memory, skipping log to Sheets");
     return;
+  }
+
 
   printLog("[SERVER] Logging to Google Sheets...");
 
   std::unique_ptr<BearSSL::WiFiClientSecure> client(
       new BearSSL::WiFiClientSecure);
   client->setInsecure(); // Google Apps Script uses valid SSL
+  client->setBufferSizes(512, 512); // Reduce buffer sizes to save RAM
+
+  // Hard timeout on the TCP connection so a stalled Google server
+  // cannot block loop() indefinitely and trigger the WDT.
+  client->setTimeout(8000); // 8 second TCP timeout
 
   HTTPClient http;
+  
   if (http.begin(*client, config.webhook)) {
     http.addHeader("Content-Type", "application/json");
+    http.setTimeout(8000); // 8 second HTTP response timeout
 
     StaticJsonDocument<256> doc;
     doc["level"] = round(currentLevel * 10) / 10.0;
@@ -53,7 +69,17 @@ inline void logToGoogleSheets() {
 
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
 
+    // Feed the watchdog immediately before the blocking HTTPS POST
+    // so the WDT timer resets and we have a full window for the request.
+    ESP.wdtFeed();
+    yield();
+
     int code = http.POST(payload);
+
+    // Feed watchdog again after the response arrives
+    ESP.wdtFeed();
+    yield();
+
     printLog("[SERVER] Sheets response: %d\n", code);
 
     if (code > 0) {

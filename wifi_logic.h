@@ -17,6 +17,9 @@ inline bool connectWiFi() {
   printLog("[WIFI] Connecting to: %s", config.ssid);
   WiFi.mode(WIFI_STA);
   WiFi.begin(config.ssid, config.pass);
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
+
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -53,6 +56,7 @@ inline void startAP() {
 
 // ─── Setup mDNS ─────────────────────────────────────────────
 inline bool setupMDNS() {
+  MDNS.end(); // Ensure mDNS is stopped before starting it again (for reconnects)
   if (MDNS.begin(MDNS_NAME)) {
     // Advertise HTTP service so mDNS browsers and clients can discover it
     MDNS.addService("http", "tcp", 80);

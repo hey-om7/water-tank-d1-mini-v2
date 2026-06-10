@@ -77,6 +77,7 @@ int historyCount = 0;
 
 // Logging
 unsigned long lastLogTime = 0;
+unsigned long lastWifiCheck = 0;
 
 // ══════════════════════════════════════════════════════════════
 //  SETUP
@@ -131,9 +132,8 @@ void setup() {
   printLog("\n══════════════════════════════════════");
   printLog("  Boot complete — system running");
   printLog("  Mode: %s\n", apMode ? "Access Point" : "WiFi Station");
-  printLog("  Sensor: read every %ds, publish every %ds\n" +
-               SENSOR_READ_INTERVAL / 1000,
-           SENSOR_INTERVAL / 1000);
+  printLog("  Sensor: read every %ds, publish every %ds\n" ,
+               SENSOR_READ_INTERVAL / 1000, SENSOR_INTERVAL / 1000);
   printLog("══════════════════════════════════════\n");
 }
 
@@ -148,15 +148,28 @@ void loop() {
 
   unsigned long now = millis();
 
+  if(!apMode && now - lastWifiCheck >= 30000) {
+    lastWifiCheck = now;
+    if (WiFi.status() != WL_CONNECTED) {
+      printLog("[WIFI] Connection lost, attempting to reconnect...");
+      WiFi.disconnect();
+      WiFi.reconnect();
+    }
+  }
+
+
+
   // ─── 3-sample burst read (every 60s) ───────────────────────
   // Collects one averaged+spike-rejected sample into the 5-slot buffer
   if (now - lastInternalRead >= SENSOR_READ_INTERVAL) {
     lastInternalRead = now;
     internalSensorRead();
+    // Yield after the blocking burst so the web server can handle
+    // any queued requests before the next loop iteration.
+    server.handleClient();
   }
 
-  // ─── Publish median + log to Sheets (every 5 min) ───────────
-  // Computes median of the 5 buffer slots, updates dashboard & Sheets
+  // ─── Publish median + update fill detection (every 5 min) ───
   if (now - lastSensorRead >= SENSOR_INTERVAL) {
     lastSensorRead = now;
     publishStableReading();
@@ -168,5 +181,8 @@ void loop() {
     lastLogTime = now;
     addHistoryEntry();
     logToGoogleSheets();
+    // Yield after the blocking HTTPS call so the web server can
+    // catch up on any requests that arrived during the POST.
+    server.handleClient();
   }
 }

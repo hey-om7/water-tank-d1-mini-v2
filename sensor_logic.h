@@ -43,11 +43,10 @@ inline void initFilter() {
   printLog("[SENSOR] Filter initialized");
 }
 
-// ─── Read Raw Distance (3-sample average over ~1 second) ─────
-// Takes 3 rapid samples spaced ~333ms apart (totalling ~1 second),
-// discards any out-of-range readings, and returns the average of
-// the valid ones. This averages out sub-second sensor noise before
-// the reading enters the spike-rejection and EMA pipeline.
+// ─── Read Raw Distance (3-sample burst, ~1 second total) ─────
+// Takes 3 samples spaced ~333ms apart. Uses yield() between samples
+// so the ESP8266 watchdog and WiFi stack are serviced during the burst.
+// This prevents the WDT from firing and keeps the web server responsive.
 inline float readRawDistance() {
   const int BURST_SAMPLES = 3;
   float samples[BURST_SAMPLES];
@@ -61,8 +60,9 @@ inline float readRawDistance() {
     delayMicroseconds(10);
     digitalWrite(TRIGGER_PIN, LOW);
 
-    // Read echo (50ms timeout)
-    long duration = pulseIn(ECHO_PIN, HIGH, 50000);
+    // Read echo — 30ms timeout (JSN-SR04T max range ~5m = ~30ms round-trip)
+    // Shorter than 50ms to reduce worst-case blocking time per sample.
+    long duration = pulseIn(ECHO_PIN, HIGH, 30000);
 
     if (duration > 0) {
       float dist = (duration * 0.0343) / 2.0;
@@ -71,7 +71,9 @@ inline float readRawDistance() {
       }
     }
 
-    // Space samples ~333ms apart so 3 samples span ~1 second
+    // Feed watchdog and service WiFi/mDNS between samples.
+    // delay() on ESP8266 calls yield() internally, keeping the WDT happy
+    // and allowing server.handleClient() work to be scheduled.
     if (i < BURST_SAMPLES - 1) delay(333);
   }
 
@@ -116,15 +118,21 @@ inline float rejectSpike(float rawDist) {
   return rawDist;
 }
 
-// ─── Internal Fast Read (called every 2s) ────────────────────
-// Reads sensor, filters through spike rejection, stores in buffer for SMA.
+// ─── Internal Read (called every 60s) ────────────────────────
+// Performs one 3-sample burst, spike-rejects the result, and stores
+// it in the 5-slot circular buffer. Feeds the watchdog before the
+// burst so the ~1s blocking time doesn't risk a WDT reset.
 inline void internalSensorRead() {
+  // Feed watchdog before the ~1s blocking burst read
+  ESP.wdtFeed();
+  yield();
+
   float raw = readRawDistance();
-  
+
   if (raw > 0) {
     currentRawDistance = raw;
   }
-  
+
   float cleaned = rejectSpike(raw);
 
   if (cleaned > 0) {
@@ -134,7 +142,10 @@ inline void internalSensorRead() {
       filterBufCount++;
   }
 
-  printLog("[SENSOR] Raw:%.1f Cleaned:%.1f SMA-BufIdx:%d\n", raw, cleaned,
+  // Feed watchdog after the burst so the next loop iteration starts clean
+  ESP.wdtFeed();
+
+  printLog("[SENSOR] Raw:%.1f Cleaned:%.1f BufIdx:%d\n", raw, cleaned,
                 filterBufIdx);
 }
 
