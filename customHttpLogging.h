@@ -6,86 +6,80 @@
 #include <ESP8266WiFi.h>
 #include <WiFiClient.h>
 #include <stdarg.h>
+#include <string.h>
 
+// Remote logging is OFF by default. Enabling it will POST every log
+// line to `baseLoggingUrl`, which is expensive and slows the device.
 bool REMOTE_LOGGING = false;
 
-// -------------------
-// HTTP logging function
-// -------------------
-int loggHttp(const String &value) {
-  HTTPClient http;
-
-  http.setTimeout(2000); // 2-second timeout (recommended)
+// ---------------------------------------------------------------
+// Remote HTTP logger (only used when REMOTE_LOGGING is true).
+// Heap-safe: takes a raw C string, does NOT create a String copy.
+// ---------------------------------------------------------------
+inline int loggHttp(const char *value) {
+  if (WiFi.status() != WL_CONNECTED) return -1;
 
   WiFiClient client;
-  http.begin(client, baseLoggingUrl);
+  HTTPClient http;
+
+  http.setTimeout(2000);      // 2-second timeout
+  http.setReuse(false);       // no keep-alive; free socket promptly
+
+  if (!http.begin(client, baseLoggingUrl)) return -1;
   http.addHeader("Content-Type", "text/plain");
 
-  int httpCode = http.POST(value);
-
-  if (httpCode == 200) {
-    Serial.println("Successfully logged: " + value);
-  } else {
-    Serial.println("Error logging: " + String(httpCode));
-  }
-
+  int httpCode = http.POST((uint8_t *)value, strlen(value));
   http.end();
+  client.stop();
+
   return httpCode;
 }
 
-// -------------------
-// Unified print function (String version)
-// -------------------
-inline void printLogStr(const String &msg) {
-  if (REMOTE_LOGGING) {
-    int r = loggHttp(msg);
-    (void)r; // suppress unused variable warning
-  } else {
-    Serial.print(msg);
-  }
-}
-
-// -------------------
-// Unified print function (printf style version)
-// -------------------
+// ---------------------------------------------------------------
+// Unified log function (printf-style).
+//
+// IMPORTANT: This function is called ~80+ times across the codebase
+// and can fire dozens of times per minute. On ESP8266 the heap is
+// only ~50 KB, so ANY per-call heap allocation here fragments the
+// heap over hours of runtime, eventually preventing BearSSL and the
+// web server from allocating their large contiguous buffers.
+//
+// This implementation is intentionally allocation-free on the hot
+// path: it formats into a stack buffer, truncates long lines,
+// writes directly to Serial (no String), and never calls malloc().
+// ---------------------------------------------------------------
 inline void printLog(const char *format, ...) {
-  char loc_buf[64];
-  char *temp = loc_buf;
+  char buf[160];  // ~2 short log lines; enough for any real message
+
   va_list arg;
-  va_list copy;
   va_start(arg, format);
-  va_copy(copy, arg);
-  int len = vsnprintf(temp, sizeof(loc_buf), format, copy);
-  va_end(copy);
-  if (len < 0) {
-    va_end(arg);
-    return;
-  }
-  if (len >= sizeof(loc_buf)) {
-    temp = (char *)malloc(len + 1);
-    if (temp == NULL) {
-      va_end(arg);
-      return;
-    }
-    vsnprintf(temp, len + 1, format, arg);
-  }
+  int len = vsnprintf(buf, sizeof(buf), format, arg);
   va_end(arg);
 
-  String msg = String(temp);
-  if (!msg.endsWith("\n")) {
-    msg += "\n";
+  if (len < 0) return;
+
+  // Truncate cleanly if it overflowed the stack buffer
+  int usableLen = (len >= (int)sizeof(buf)) ? (int)sizeof(buf) - 1 : len;
+
+  if (REMOTE_LOGGING) {
+    // Rare path — remote logging is off by default.
+    buf[usableLen] = '\0';
+    loggHttp(buf);
+    return;
   }
 
-  printLogStr(msg);
-
-  if (temp != loc_buf) {
-    free(temp);
+  Serial.write((const uint8_t *)buf, usableLen);
+  if (usableLen == 0 || buf[usableLen - 1] != '\n') {
+    Serial.write('\n');
   }
 }
 
-inline void printLogForce(const String &msg) {
-  int r = loggHttp(msg);
-  (void)r; // suppress unused variable warning
+// ---------------------------------------------------------------
+// Force-push a message to the remote logger regardless of the
+// REMOTE_LOGGING flag. Rarely used.
+// ---------------------------------------------------------------
+inline void printLogForce(const char *msg) {
+  loggHttp(msg);
 }
 
 #endif // HTTPLOGGING_H

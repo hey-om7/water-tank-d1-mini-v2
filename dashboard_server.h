@@ -15,6 +15,10 @@
 #include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClientSecureBearSSL.h>
+#include <memory>
+#include <new>
+
+int skipCount = 0;
 
 // ─── Add History Entry ───────────────────────────────────────
 inline void addHistoryEntry() {
@@ -31,20 +35,40 @@ inline void logToGoogleSheets() {
   if (WiFi.status() != WL_CONNECTED) return;
 
   uint32_t freeHeap = ESP.getFreeHeap();
-  uint32_t fragPct = ESP.getHeapFragmentation();
-  printLog("[SERVER] Before log: (Free heap: %u bytes, Fragmentation: %u%%)",
-                freeHeap, fragPct);
+  uint16_t maxBlock = ESP.getMaxFreeBlockSize();
+  uint8_t  fragPct  = ESP.getHeapFragmentation();
+  printLog("[SERVER] Before log: free=%u maxBlock=%u frag=%u%%",
+           freeHeap, maxBlock, fragPct);
 
-  if(freeHeap < 25000 || fragPct > 50) {
-    printLog("[SERVER] Warning: Low memory, skipping log to Sheets");
+  // Refuse to try SSL if we don't have enough contiguous heap for
+  // BearSSL's ~16 KB context. Failing early here is much safer than
+  // letting BearSSL allocate deep inside the SSL handshake and hang.
+  if (freeHeap < 25000 || fragPct > 50 || maxBlock < 18000) {
+    skipCount++;
+    printLog("[SERVER] Low memory, skipping log to Sheets (skip=%d)", skipCount);
+    if (skipCount > 3) {
+      printLog("[SERVER] Persistent low memory — rebooting to recover.");
+      skipCount = 0;
+      delay(500);
+      ESP.restart();
+    }
     return;
   }
+  skipCount = 0; // Reset skip count on healthy heap
 
 
   printLog("[SERVER] Logging to Google Sheets...");
 
+  // std::nothrow: on ESP8266 Arduino, plain `new` returns nullptr
+  // instead of throwing when allocation fails. Handle that safely
+  // instead of dereferencing a null unique_ptr.
   std::unique_ptr<BearSSL::WiFiClientSecure> client(
-      new BearSSL::WiFiClientSecure);
+      new (std::nothrow) BearSSL::WiFiClientSecure);
+  if (!client) {
+    printLog("[SERVER] Failed to allocate SSL client (OOM)");
+    return;
+  }
+
   client->setInsecure(); // Google Apps Script uses valid SSL
   client->setBufferSizes(512, 512); // Reduce buffer sizes to save RAM
 
@@ -53,10 +77,11 @@ inline void logToGoogleSheets() {
   client->setTimeout(8000); // 8 second TCP timeout
 
   HTTPClient http;
-  
+
   if (http.begin(*client, config.webhook)) {
     http.addHeader("Content-Type", "application/json");
-    http.setTimeout(8000); // 8 second HTTP response timeout
+    http.setTimeout(8000);        // 8 second HTTP response timeout
+    http.setReuse(false);         // no keep-alive; free socket immediately
 
     StaticJsonDocument<256> doc;
     doc["level"] = round(currentLevel * 10) / 10.0;
@@ -80,19 +105,24 @@ inline void logToGoogleSheets() {
     ESP.wdtFeed();
     yield();
 
-    printLog("[SERVER] Sheets response: %d\n", code);
+    printLog("[SERVER] Sheets response: %d", code);
 
     if (code > 0) {
       if (code == HTTP_CODE_OK || code == HTTP_CODE_FOUND ||
           code == HTTP_CODE_MOVED_PERMANENTLY) {
         printLog("[SERVER] Successfully logged to Sheets!");
       } else {
-        printLog("[SERVER] Warning: Sheets returned HTTP %d\n", code);
-        String response = http.getString();
-        printLog("[SERVER] Response body: %s\n", response.c_str());
+        // Deliberately do NOT read the response body here.
+        // Google Apps Script error pages can be several KB of HTML;
+        // reading them via getString() creates a large temporary
+        // String that severely fragments the heap right when we
+        // already know something went wrong. HTTP code alone is
+        // enough for diagnostics.
+        printLog("[SERVER] Warning: Sheets returned HTTP %d (body skipped)",
+                 code);
       }
     } else {
-      printLog("[SERVER] HTTP Request failed, error: %s\n",
+      printLog("[SERVER] HTTP Request failed, error: %s",
                     http.errorToString(code).c_str());
     }
 
@@ -100,6 +130,10 @@ inline void logToGoogleSheets() {
   } else {
     printLog("[SERVER] Unable to connect to webhook URL.");
   }
+
+  // Ensure the SSL socket is fully closed before the client is
+  // destructed — belt-and-braces to avoid any lingering TCP state.
+  client->stop();
 }
 
 // ─── Setup Dashboard Routes (Normal Mode) ────────────────────

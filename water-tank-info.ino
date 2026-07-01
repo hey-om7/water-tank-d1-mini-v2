@@ -86,6 +86,14 @@ void setup() {
   Serial.begin(115200);
   delay(100);
 
+  // Enable the hardware watchdog explicitly (~8 s). This is insurance
+  // on top of the software WDT — if any part of the stack ever hangs
+  // in a state where the SW WDT still gets fed but forward progress
+  // has stopped, the HW WDT will force a reboot instead of leaving the
+  // device silently unresponsive.
+  ESP.wdtDisable();
+  ESP.wdtEnable(WDTO_8S);
+
   printLog("\n\n══════════════════════════════════════");
   printLog("  Water Tank Monitor — Starting Up");
   printLog("══════════════════════════════════════");
@@ -131,16 +139,19 @@ void setup() {
 
   printLog("\n══════════════════════════════════════");
   printLog("  Boot complete — system running");
-  printLog("  Mode: %s\n", apMode ? "Access Point" : "WiFi Station");
-  printLog("  Sensor: read every %ds, publish every %ds\n" ,
+  printLog("  Mode: %s", apMode ? "Access Point" : "WiFi Station");
+  printLog("  Sensor: read every %ds, publish every %ds",
                SENSOR_READ_INTERVAL / 1000, SENSOR_INTERVAL / 1000);
-  printLog("══════════════════════════════════════\n");
+  printLog("══════════════════════════════════════");
 }
 
 // ══════════════════════════════════════════════════════════════
 //  LOOP
 // ══════════════════════════════════════════════════════════════
 void loop() {
+  // Feed the watchdog at the top of every iteration.
+  ESP.wdtFeed();
+
   server.handleClient();
 
   if (!apMode)
@@ -148,12 +159,72 @@ void loop() {
 
   unsigned long now = millis();
 
-  if(!apMode && now - lastWifiCheck >= 30000) {
+  // ─── Heap-health monitor ─────────────────────────────────────
+  // The main long-term failure mode on this platform is heap
+  // fragmentation: after hours/days, the largest free block
+  // shrinks below what BearSSL (~16 KB contiguous) or the web
+  // server needs, and network I/O silently fails while loop()
+  // keeps running. We check every minute and force a reboot
+  // BEFORE that happens, using the largest-free-block metric
+  // (not just total free heap, which can be misleading).
+  {
+    static unsigned long lastHeapCheck = 0;
+    static uint8_t   heapCriticalStrikes = 0;
+    const  unsigned long HEAP_CHECK_INTERVAL = 60000; // 1 minute
+
+    if (now - lastHeapCheck >= HEAP_CHECK_INTERVAL) {
+      lastHeapCheck = now;
+      uint32_t freeHeap  = ESP.getFreeHeap();
+      uint16_t maxBlock  = ESP.getMaxFreeBlockSize();
+      uint8_t  fragPct   = ESP.getHeapFragmentation();
+
+      // Thresholds tuned for BearSSL headroom on ESP8266:
+      //  - <18 KB max contiguous block cannot host SSL context reliably.
+      //  - >70% fragmentation is the danger zone.
+      //  - <10 KB total free heap is already failing.
+      bool critical = (freeHeap < 10000) ||
+                      (fragPct  > 70)    ||
+                      (maxBlock < 18000);
+
+      if (critical) {
+        heapCriticalStrikes++;
+        printLog("[HEAP] critical: free=%u maxBlock=%u frag=%u%% strike=%u",
+                 freeHeap, maxBlock, fragPct, heapCriticalStrikes);
+        // 3 consecutive critical readings (~3 min) → reboot to recover.
+        if (heapCriticalStrikes >= 3) {
+          printLog("[HEAP] Rebooting to recover heap.");
+          delay(200);
+          ESP.restart();
+        }
+      } else {
+        heapCriticalStrikes = 0;
+      }
+    }
+  }
+
+  // ─── WiFi keep-alive ────────────────────────────────────────
+  // Rely on the SDK's built-in auto-reconnect (enabled in
+  // connectWiFi). We do NOT call WiFi.disconnect() here — that
+  // tears down the auto-reconnect state machine and can leave the
+  // radio permanently down. We only nudge with reconnect() and, if
+  // that fails for ~3 min, we reboot to escape any wedged state.
+  if (!apMode && now - lastWifiCheck >= 30000) {
     lastWifiCheck = now;
+    static uint8_t wifiFailCount = 0;
+
     if (WiFi.status() != WL_CONNECTED) {
-      printLog("[WIFI] Connection lost, attempting to reconnect...");
-      WiFi.disconnect();
+      wifiFailCount++;
+      printLog("[WIFI] Not connected (fail #%u), nudging reconnect...",
+               wifiFailCount);
       WiFi.reconnect();
+
+      if (wifiFailCount >= 6) {   // 6 × 30 s = 3 minutes
+        printLog("[WIFI] Persistent connection loss — rebooting.");
+        delay(200);
+        ESP.restart();
+      }
+    } else {
+      wifiFailCount = 0;
     }
   }
 

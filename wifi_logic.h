@@ -15,11 +15,13 @@
 // ─── Connect to WiFi (STA Mode) ─────────────────────────────
 inline bool connectWiFi() {
   printLog("[WIFI] Connecting to: %s", config.ssid);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(config.ssid, config.pass);
-  WiFi.setAutoReconnect(true);
-  WiFi.persistent(false);
 
+  // IMPORTANT: persistent(false) MUST be called before begin() so
+  // that credentials are not written to flash on every connect.
+  WiFi.persistent(false);
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.begin(config.ssid, config.pass);
 
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
@@ -31,11 +33,10 @@ inline bool connectWiFi() {
     delay(500);
     printLog(".");
   }
-  printLog(" OK\n");
-  printLog("[WIFI] IP Address: ");
-  printLog(WiFi.localIP().toString().c_str());
-  printLog("\n");
-  printLog("[WIFI] Signal strength (RSSI): %d dBm\n", WiFi.RSSI());
+  printLog(" OK");
+  // NB: use "%s" so IP text is never interpreted as a printf format.
+  printLog("[WIFI] IP Address: %s", WiFi.localIP().toString().c_str());
+  printLog("[WIFI] Signal strength (RSSI): %d dBm", WiFi.RSSI());
   return true;
 }
 
@@ -49,9 +50,19 @@ inline void startAP() {
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
 
   WiFi.softAP(AP_SSID, AP_PASS);
-  printLog("[WIFI] AP Mode started. IP: ");
-  printLog(WiFi.softAPIP().toString().c_str());
-  printLog("\n");
+  // NB: "%s" prevents the IP text from being treated as a printf format.
+  printLog("[WIFI] AP Mode started. IP: %s",
+           WiFi.softAPIP().toString().c_str());
+}
+
+// ─── mDNS running-state flag ────────────────────────────────
+// Shared between setupMDNS() (called from setup()) and
+// maintainMDNS() (called from loop()) so that the loop-side
+// state machine doesn't tear the mDNS stack down and rebuild
+// it on the very first iteration.
+inline bool &mdnsRunningRef() {
+  static bool running = false;
+  return running;
 }
 
 // ─── Setup mDNS ─────────────────────────────────────────────
@@ -60,10 +71,12 @@ inline bool setupMDNS() {
   if (MDNS.begin(MDNS_NAME)) {
     // Advertise HTTP service so mDNS browsers and clients can discover it
     MDNS.addService("http", "tcp", 80);
-    printLog("[WIFI] mDNS started: http://%s.local\n", MDNS_NAME);
+    printLog("[WIFI] mDNS started: http://%s.local", MDNS_NAME);
+    mdnsRunningRef() = true;
     return true;
   }
   printLog("[WIFI] mDNS failed to start");
+  mdnsRunningRef() = false;
   return false;
 }
 
@@ -71,7 +84,6 @@ inline bool setupMDNS() {
 // Re-initialises mDNS if WiFi reconnects after a drop so that
 // watertank.local keeps resolving reliably.
 inline void maintainMDNS() {
-  static bool mdnsRunning = false;
   static unsigned long lastCheck = 0;
   const unsigned long CHECK_INTERVAL = 5000; // check every 5 s
 
@@ -79,11 +91,12 @@ inline void maintainMDNS() {
   if (now - lastCheck < CHECK_INTERVAL) return;
   lastCheck = now;
 
+  bool &mdnsRunning = mdnsRunningRef();
   bool connected = (WiFi.status() == WL_CONNECTED);
 
   if (connected && !mdnsRunning) {
     // WiFi just came (back) up — (re)start mDNS
-    mdnsRunning = setupMDNS();
+    setupMDNS();
   } else if (!connected && mdnsRunning) {
     // WiFi dropped — mark mDNS as down so we restart it when it returns
     mdnsRunning = false;
