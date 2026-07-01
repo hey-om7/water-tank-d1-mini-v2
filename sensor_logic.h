@@ -38,7 +38,7 @@ inline void initFilter() {
   filterBufIdx = 0;
   filterBufCount = 0;
   lastValidDistance = -1;
-  currentRawDistance = 0;
+  currentRawDistance = -1; // sentinel: "no valid reading yet"
   spikeCount = 0;
   printLog("[SENSOR] Filter initialized");
 }
@@ -78,10 +78,34 @@ inline float readRawDistance() {
   }
 
   if (validCount == 0) return -1;
+  if (validCount == 1) return samples[0];
 
-  float sum = 0;
-  for (int i = 0; i < validCount; i++) sum += samples[i];
-  return sum / validCount;
+  // MEDIAN of the burst (not mean). This is the same idea as the outer
+  // 5-slot median in publishStableReading, applied at the finer 3-sample
+  // granularity: one bad echo inside a burst is *ignored entirely* by
+  // the median, whereas an arithmetic mean would absorb ~33% of the
+  // outlier and drag the raw value in that direction. Combined with the
+  // downstream rejectSpike + 5-slot median this makes the pipeline
+  // robust to environmental spikes (evaporation, ripples, condensation)
+  // without slowing the response to real level changes — for a clean
+  // burst with no outlier, mean and median of 3 give the same answer.
+  //
+  // Simple insertion sort — validCount is at most BURST_SAMPLES (=3).
+  for (int i = 1; i < validCount; i++) {
+    float key = samples[i];
+    int j = i - 1;
+    while (j >= 0 && samples[j] > key) {
+      samples[j + 1] = samples[j];
+      j--;
+    }
+    samples[j + 1] = key;
+  }
+
+  if (validCount % 2 == 1) {
+    return samples[validCount / 2];
+  }
+  // Even count (2): true median = mean of the two middles.
+  return (samples[validCount / 2 - 1] + samples[validCount / 2]) / 2.0f;
 }
 
 // ─── Stage 2: Spike Rejection ────────────────────────────────
@@ -151,6 +175,14 @@ inline void internalSensorRead() {
 
 // ─── Calculate Water Level Percentage ────────────────────────
 inline float calculateLevel(float distance) {
+  // Guard: no valid reading yet (sensor hasn't produced a value or
+  // returned -1). Without this guard, distance==0 would evaluate to
+  // 100.0 * tankEmpty / (tankEmpty - tankFull) > 100%, get clamped to
+  // 100, and the dashboard would show "TANK FULL" on boot before any
+  // real sensor data has arrived. Return 0 for "no data yet" instead.
+  if (distance <= 0)
+    return 0;
+
   if (config.tankEmpty <= config.tankFull)
     return 0;
 
@@ -173,9 +205,23 @@ inline float calculateLiters(float distance) {
   if (config.tankGirth == 0 || config.tankGirth == 0xFFFF)
     return 0; // Not configured
 
+  // Same "no valid reading yet" guard as calculateLevel.
+  if (distance <= 0)
+    return 0;
+
   float waterHeight = (float)config.tankEmpty - distance;
   if (waterHeight < 0)
     waterHeight = 0;
+
+  // Cap water height at the tank's physical capacity so a distance
+  // reading shorter than tankFull (surface splash, brief overshoot,
+  // sensor blind-zone artefact near the full mark) cannot inflate
+  // the volume beyond what the tank can physically hold.
+  if (config.tankEmpty > config.tankFull) {
+    float maxHeight = (float)config.tankEmpty - (float)config.tankFull;
+    if (waterHeight > maxHeight)
+      waterHeight = maxHeight;
+  }
 
   float radius = (float)config.tankGirth / (2.0 * 3.14159265);
   float area = 3.14159265 * radius * radius; // cm²
@@ -217,8 +263,20 @@ inline void publishStableReading() {
     tmp[j + 1] = key;
   }
 
-  // Pick the middle value (median)
-  float medianDist = tmp[n / 2];
+  // Pick the middle value (median).
+  //
+  // For odd n the true median is tmp[n/2]. For even n the true median
+  // is the average of the two centre values — the previous code always
+  // picked tmp[n/2], which is the *upper* middle, biasing the reported
+  // distance high (level low) whenever the buffer wasn't fully filled
+  // (boot warm-up, or after rejectSpike dropped a sample). This is the
+  // proper median for both parities.
+  float medianDist;
+  if (n % 2 == 1) {
+    medianDist = tmp[n / 2];
+  } else {
+    medianDist = (tmp[n / 2 - 1] + tmp[n / 2]) / 2.0f;
+  }
 
   currentDistance = medianDist;
   currentLevel    = calculateLevel(currentDistance);

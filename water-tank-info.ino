@@ -48,7 +48,11 @@ Config config;
 bool apMode = false;
 
 // Sensor state
-float currentDistance = 0;
+// currentDistance / currentRawDistance are initialised to -1 (a value
+// the sensor cannot physically produce) so the calculators can detect
+// "no valid reading yet" and return 0 instead of computing against a
+// bogus distance==0 (which would give a spurious 100 % full).
+float currentDistance = -1;
 float currentLevel = 0;  // 0-100%
 float currentLiters = 0; // Total liters remaining
 unsigned long lastSensorRead = 0;
@@ -58,7 +62,7 @@ float filterBuffer[FILTER_BUFFER_SIZE];
 int filterBufIdx = 0;
 int filterBufCount = 0;
 float lastValidDistance = -1;
-float currentRawDistance = 0;
+float currentRawDistance = -1;
 int spikeCount = 0;
 unsigned long lastInternalRead = 0;
 

@@ -17,54 +17,57 @@
  *
  * SERVER-SIDE FILTRATION PIPELINE (applied to every incoming reading):
  *
- *  Stage 1 — Velocity Clamp (3.0 %/interval)
- *    Hard-blocks any single-interval change that is physically impossible.
- *    Both rises and drops are clamped symmetrically.
+ * The firmware side already applies a heavy filter chain before every
+ * POST (median-of-3 per 3-sample burst → 5 cm spike rejection →
+ * median-of-5 over five 60-second slots). Incoming values are therefore
+ * already very stable; this server pipeline is intentionally light and
+ * only defends against catastrophic glitches while producing a smooth
+ * curve for the chart.
+ *
+ *  Stage 1 — Velocity Clamp (20.0 %/interval)
+ *    Hard-blocks any single-interval change larger than 20 %. This is a
+ *    safety net for catastrophic sensor glitches only — the firmware
+ *    cannot physically produce a real >~14 % delta per 5-min publish
+ *    given its own rejectSpike + median window.
  *
  *  Stage 2 — Fine Hysteresis Deadzone (0.5 %)
- *    If the clamped change is smaller than 0.5 %, the stored value is kept
- *    completely flat. Eliminates micro-jitter on an idle tank.
+ *    If the clamped change is smaller than 0.5 %, the stored value is
+ *    kept completely flat. Eliminates micro-jitter on an idle tank.
  *
- *  Stage 3 — Temporal Validation (0.5 % – 1.5 % zone)
- *    Changes in the 0.5–1.5 % band are held as "pending" for one interval.
- *    They are only committed if the NEXT reading also moves in the same
- *    direction, confirming the change is real and not a surface ripple.
- *    Changes > 1.5 % (after the velocity clamp) are committed immediately.
- *
- *  Stage 4 — EMA Smoothing (α = 0.4)
+ *  Stage 3 — EMA Smoothing (α = 0.7)
  *    The committed value is blended into the historical trend:
- *      smoothed = 0.4 × committed + 0.6 × previous
- *    Produces a smooth, organic graph curve.
+ *      smoothed = 0.7 × committed + 0.3 × previous
+ *    Light smoothing — firmware median-of-5 is the primary smoother,
+ *    this stage just keeps the chart curve visually continuous.
  *
  * FILLING DETECTION:
- *  "Is Filling" = "Yes" only when the EMA-smoothed level has risen by ≥ 3 %
- *  across at least 2 consecutive 5-minute windows (monotonically rising).
+ *  "Is Filling" uses the firmware's own `data.filling` flag directly.
+ *  The device runs a 10-window (50 min) monotonic-rise fill detector
+ *  which sees the true 5-min publish values with full context, and is
+ *  the single source of truth. The GAS side does not recompute it.
  *
  * CALIBRATION RESET:
- *  GET ?action=resetCalibration deletes ALL ScriptProperties so the filter
- *  re-homes to the raw sensor value on the very next check-in, bypassing
- *  all stages until the baseline is re-established.
+ *  GET ?action=resetCalibration deletes ALL ScriptProperties so the
+ *  filter re-homes to the raw sensor value on the very next check-in,
+ *  bypassing all stages until the baseline is re-established.
  */
 
 // ── Pipeline constants ────────────────────────────────────────────────────────
 
-var VELOCITY_CLAMP        = 3.0;  // Max change (%) per 5-min interval (rise or drop)
+var VELOCITY_CLAMP        = 20.0; // Safety net only — max change (%) per 5-min interval.
+                                  // Firmware cannot physically produce a real delta
+                                  // larger than ~14 %/publish, so this only catches
+                                  // catastrophic glitches without limiting real dynamics.
 var HYSTERESIS_DEADZONE   = 0.5;  // Changes smaller than this are ignored (kept flat)
-var TEMPORAL_LOWER        = 0.5;  // Bottom of the temporal validation band (%)
-var TEMPORAL_UPPER        = 1.5;  // Top of the temporal validation band (%)
-var EMA_ALPHA             = 0.4;  // EMA blend factor (0 = no update, 1 = raw value)
+var EMA_ALPHA             = 0.7;  // Light EMA — firmware median-of-5 is the primary smoother
 
-// ── Filling detection constants ───────────────────────────────────────────────
+// ── Fill-session scan (used by doGet only) ───────────────────────────────────
 
-var FILL_MIN_RISE_TOTAL   = 3.0;  // Total rise (%) required to declare filling
-var FILL_MIN_CONSECUTIVE  = 2;    // Consecutive rising windows required
-var FILL_RISE_THRESHOLD   = 2.0;  // Min rise per row for fill-session scan in doGet
+var FILL_RISE_THRESHOLD   = 2.0;  // Min per-row rise to belong to a fill session
 
 // ── Script Properties keys ────────────────────────────────────────────────────
 
 var PROP_LAST_LEVEL   = 'lastAcceptedLevel';  // EMA-smoothed level persisted between posts
-var PROP_PENDING      = 'pendingChange';       // Pending temporal-validation value
-var PROP_RISE_BUFFER  = 'riseBuffer';          // Recent levels for filling detection
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -86,27 +89,29 @@ function calcMedian(arr) {
 }
 
 /**
- * Run the full 4-stage pipeline on a raw incoming level value.
+ * Run the 2-stage pipeline on a raw incoming level value.
  *
- * @param {number}      rawLevel   - incoming level from device (already a
- *                                   firmware-side median of 5 readings)
+ * The firmware already provides a median-of-5 stable reading, so this
+ * server pipeline is intentionally light:
+ *   Stage 1 — velocity clamp (catastrophic-glitch safety net)
+ *   Stage 2 — hysteresis deadzone (idle-tank micro-jitter suppression)
+ * EMA smoothing is applied by applyEMA() afterwards, outside this fn.
+ *
+ * @param {number}      rawLevel   - incoming level from device (already
+ *                                   a firmware-side median of 5 readings)
  * @param {number|null} lastLevel  - previous EMA-smoothed stored level
- * @param {object|null} pending    - { value, direction } or null
  *
- * @returns {{ committed: number, newPending: object|null }}
- *   committed  — the value to store and EMA-blend (null = keep lastLevel flat)
- *   newPending — updated pending state to persist
+ * @returns {number|null}
+ *   committed value to EMA-blend, or null to keep lastLevel flat
  */
-function runPipeline(rawLevel, lastLevel, pending) {
+function runPipeline(rawLevel, lastLevel) {
+
+  // First reading after reset — accept raw directly, skip all stages
+  if (lastLevel === null) return rawLevel;
 
   // ── Stage 1: Velocity Clamp ───────────────────────────────
-  var clamped;
-  if (lastLevel === null) {
-    // First reading after reset — accept raw directly, skip all stages
-    return { committed: rawLevel, newPending: null };
-  }
-
   var delta = rawLevel - lastLevel;
+  var clamped;
   if (delta > VELOCITY_CLAMP) {
     clamped = lastLevel + VELOCITY_CLAMP;
   } else if (delta < -VELOCITY_CLAMP) {
@@ -115,33 +120,17 @@ function runPipeline(rawLevel, lastLevel, pending) {
     clamped = rawLevel;
   }
 
-  var clampedDelta = clamped - lastLevel;
-  var absDelta = Math.abs(clampedDelta);
+  var absDelta = Math.abs(clamped - lastLevel);
 
   // ── Stage 2: Hysteresis Deadzone ─────────────────────────
   if (absDelta < HYSTERESIS_DEADZONE) {
-    // Change too small — keep flat, clear any pending
-    return { committed: null, newPending: null };
+    // Change too small — keep flat
+    return null;
   }
 
-  // ── Stage 3: Temporal Validation ─────────────────────────
-  if (absDelta >= TEMPORAL_LOWER && absDelta < TEMPORAL_UPPER) {
-    // In the validation band — needs confirmation from next window
-    var direction = clampedDelta > 0 ? 1 : -1;
-
-    if (pending !== null && pending.direction === direction) {
-      // Same direction confirmed — commit the pending value
-      var confirmed = pending.value;
-      return { committed: confirmed, newPending: null };
-    } else {
-      // First time seeing this change — hold as pending
-      return { committed: null, newPending: { value: clamped, direction: direction } };
-    }
-  }
-
-  // ── Change > TEMPORAL_UPPER: commit immediately ───────────
-  // (already passed velocity clamp, so this is a real significant change)
-  return { committed: clamped, newPending: null };
+  // Commit directly. Firmware's median-of-5 window already provides the
+  // temporal validation this pipeline used to add server-side.
+  return clamped;
 }
 
 /**
@@ -156,28 +145,9 @@ function applyEMA(committed, lastLevel) {
 }
 
 /**
- * Determine whether the current level constitutes "Is Filling".
- * Requires FILL_MIN_CONSECUTIVE consecutive rising windows with
- * a total rise of at least FILL_MIN_RISE_TOTAL.
- */
-function isFillingNow(currentLevel, riseBuffer) {
-  if (riseBuffer.length < FILL_MIN_CONSECUTIVE) return false;
-
-  var window = riseBuffer.concat([currentLevel]);
-  var start = window.length - FILL_MIN_CONSECUTIVE - 1;
-  if (start < 0) start = 0;
-  var slice = window.slice(start);
-
-  for (var i = 1; i < slice.length; i++) {
-    if (slice[i] <= slice[i - 1]) return false;
-  }
-
-  return (slice[slice.length - 1] - slice[0]) >= FILL_MIN_RISE_TOTAL;
-}
-
-/**
  * Apply the pipeline to a historical level value for doGet chart cleaning.
- * Uses a simplified version (velocity clamp + EMA only — no temporal state).
+ * Uses a simplified version (velocity clamp + EMA only — no deadzone or
+ * commit logic; historical values are already committed).
  */
 function applyReadFilter(rawValue, lastAccepted) {
   if (lastAccepted === null) return rawValue;
@@ -220,20 +190,18 @@ function doPost(e) {
 
     var rawLevel = Number(data.level) || 0;
 
-    // Load persisted state
-    var lastLevel  = loadProp(PROP_LAST_LEVEL,  null);
-    var pending    = loadProp(PROP_PENDING,     null);
-    var riseBuffer = loadProp(PROP_RISE_BUFFER, []);
+    // Load persisted state (only the EMA-smoothed level; the temporal
+    // pending state and rise buffer are no longer used — see header docs.)
+    var lastLevel = loadProp(PROP_LAST_LEVEL, null);
 
-    // ── Run 4-stage pipeline ──────────────────────────────────
-    var result = runPipeline(rawLevel, lastLevel, pending);
+    // ── Run 2-stage pipeline + EMA ────────────────────────────
+    var committed = runPipeline(rawLevel, lastLevel);
 
     var currentLevel;
-    if (result.committed !== null) {
-      // Blend committed value through EMA
-      currentLevel = applyEMA(result.committed, lastLevel);
+    if (committed !== null) {
+      currentLevel = applyEMA(committed, lastLevel);
     } else {
-      // Deadzone or pending — keep previous level flat
+      // Deadzone — keep previous level flat
       currentLevel = (lastLevel !== null) ? lastLevel : rawLevel;
     }
 
@@ -242,15 +210,12 @@ function doPost(e) {
 
     // Persist updated state
     saveProp(PROP_LAST_LEVEL, currentLevel);
-    saveProp(PROP_PENDING,    result.newPending);
 
-    // ── Filling detection ─────────────────────────────────────
-    var filling = isFillingNow(currentLevel, riseBuffer);
-    riseBuffer.push(currentLevel);
-    if (riseBuffer.length > FILL_MIN_CONSECUTIVE + 1) riseBuffer.shift();
-    saveProp(PROP_RISE_BUFFER, riseBuffer);
-
-    var isFillingValue = filling ? 'Yes' : 'No';
+    // ── Filling flag: firmware is the single source of truth ──
+    // The device runs its own 10-window (50 min) monotonic-rise
+    // detector on the true 5-min publish stream. We store that flag
+    // directly so "Is Filling" and "Fill Rate" columns are consistent.
+    var isFillingValue = (data.filling === true) ? 'Yes' : 'No';
 
     // Append row
     sheet.appendRow([
