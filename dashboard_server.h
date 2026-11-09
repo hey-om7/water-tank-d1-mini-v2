@@ -1,272 +1,90 @@
 /*
- * dashboard_server.h — HTTP Server & API Routes
- * ================================================
- * Lightweight web server for the dashboard UI, sensor data APIs,
- * config management, history logging, and captive portal for AP mode.
+ * dashboard_server.h — Minimal HTTP Server
+ * ==========================================
+ * Simple web page showing water level, auto-refreshes every 30s.
+ * Retains: /api/restart, captive portal for AP mode.
+ * No ArduinoJson, no Google Sheets, no history, no heavy CSS.
  */
 
 #ifndef DASHBOARD_SERVER_H
 #define DASHBOARD_SERVER_H
 
 #include "config_logic.h"
-#include "dashboard.h"
 #include "globals.h"
 #include "sensor_logic.h"
-#include <ArduinoJson.h>
-#include <ESP8266HTTPClient.h>
-#include <WiFiClientSecureBearSSL.h>
-#include <memory>
-#include <new>
 
-int skipCount = 0;
+// ─── Serve Simple Dashboard HTML ─────────────────────────────
+inline void serveDashboard() {
+  float level = currentLevel;
+  float dist = currentDistance;
+  unsigned long upSec = millis() / 1000;
 
-// ─── Add History Entry ───────────────────────────────────────
-inline void addHistoryEntry() {
-  historyBuf[historyHead].timestamp = millis() / 1000;
-  historyBuf[historyHead].level = currentLevel;
-  historyHead = (historyHead + 1) % HISTORY_SIZE;
-  if (historyCount < HISTORY_SIZE)
-    historyCount++;
-}
-
-// ─── Log to Google Sheets ────────────────────────────────────
-inline void logToGoogleSheets() {
-  if (strlen(config.webhook) < 10) return; // No webhook configured
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  uint32_t freeHeap = ESP.getFreeHeap();
-  uint16_t maxBlock = ESP.getMaxFreeBlockSize();
-  uint8_t  fragPct  = ESP.getHeapFragmentation();
-  printLog("[SERVER] Before log: free=%u maxBlock=%u frag=%u%%",
-           freeHeap, maxBlock, fragPct);
-
-  // Refuse to try SSL if we don't have enough contiguous heap for
-  // BearSSL's ~16 KB context. Failing early here is much safer than
-  // letting BearSSL allocate deep inside the SSL handshake and hang.
-  if (freeHeap < 25000 || fragPct > 50 || maxBlock < 18000) {
-    skipCount++;
-    printLog("[SERVER] Low memory, skipping log to Sheets (skip=%d)", skipCount);
-    if (skipCount > 3) {
-      printLog("[SERVER] Persistent low memory — rebooting to recover.");
-      skipCount = 0;
-      delay(500);
-      ESP.restart();
-    }
-    return;
-  }
-  skipCount = 0; // Reset skip count on healthy heap
-
-
-  printLog("[SERVER] Logging to Google Sheets...");
-
-  // std::nothrow: on ESP8266 Arduino, plain `new` returns nullptr
-  // instead of throwing when allocation fails. Handle that safely
-  // instead of dereferencing a null unique_ptr.
-  std::unique_ptr<BearSSL::WiFiClientSecure> client(
-      new (std::nothrow) BearSSL::WiFiClientSecure);
-  if (!client) {
-    printLog("[SERVER] Failed to allocate SSL client (OOM)");
-    return;
-  }
-
-  client->setInsecure(); // Google Apps Script uses valid SSL
-  client->setBufferSizes(512, 512); // Reduce buffer sizes to save RAM
-
-  // Hard timeout on the TCP connection so a stalled Google server
-  // cannot block loop() indefinitely and trigger the WDT.
-  client->setTimeout(8000); // 8 second TCP timeout
-
-  HTTPClient http;
-
-  if (http.begin(*client, config.webhook)) {
-    http.addHeader("Content-Type", "application/json");
-    http.setTimeout(8000);        // 8 second HTTP response timeout
-    http.setReuse(false);         // no keep-alive; free socket immediately
-
-    StaticJsonDocument<256> doc;
-    doc["level"] = round(currentLevel * 10) / 10.0;
-    doc["distance"] = round(currentDistance * 10) / 10.0;
-    doc["filling"] = isFilling;
-    doc["fillRate"] = round(fillRate * 100) / 100.0;
-
-    String payload;
-    serializeJson(doc, payload);
-
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-
-    // Feed the watchdog immediately before the blocking HTTPS POST
-    // so the WDT timer resets and we have a full window for the request.
-    ESP.wdtFeed();
-    yield();
-
-    int code = http.POST(payload);
-
-    // Feed watchdog again after the response arrives
-    ESP.wdtFeed();
-    yield();
-
-    printLog("[SERVER] Sheets response: %d", code);
-
-    if (code > 0) {
-      if (code == HTTP_CODE_OK || code == HTTP_CODE_FOUND ||
-          code == HTTP_CODE_MOVED_PERMANENTLY) {
-        printLog("[SERVER] Successfully logged to Sheets!");
-      } else {
-        // Deliberately do NOT read the response body here.
-        // Google Apps Script error pages can be several KB of HTML;
-        // reading them via getString() creates a large temporary
-        // String that severely fragments the heap right when we
-        // already know something went wrong. HTTP code alone is
-        // enough for diagnostics.
-        printLog("[SERVER] Warning: Sheets returned HTTP %d (body skipped)",
-                 code);
-      }
-    } else {
-      printLog("[SERVER] HTTP Request failed, error: %s",
-                    http.errorToString(code).c_str());
-    }
-
-    http.end();
+  // Pick background color based on level
+  const char *bgColor;
+  const char *statusText;
+  if (level >= 75) {
+    bgColor = "#0d7377";  // Teal-green — good
+    statusText = "GOOD";
+  } else if (level >= 40) {
+    bgColor = "#1a5276"; // Blue — moderate
+    statusText = "MODERATE";
+  } else if (level >= 15) {
+    bgColor = "#7d6608"; // Dark yellow — low
+    statusText = "LOW";
   } else {
-    printLog("[SERVER] Unable to connect to webhook URL.");
+    bgColor = "#78281f"; // Dark red — critical
+    statusText = "CRITICAL";
   }
 
-  // Ensure the SSL socket is fully closed before the client is
-  // destructed — belt-and-braces to avoid any lingering TCP state.
-  client->stop();
+  // Format uptime
+  char uptimeStr[32];
+  if (upSec < 3600) {
+    snprintf(uptimeStr, sizeof(uptimeStr), "%lum %lus", upSec / 60, upSec % 60);
+  } else if (upSec < 86400) {
+    snprintf(uptimeStr, sizeof(uptimeStr), "%luh %lum", upSec / 3600, (upSec % 3600) / 60);
+  } else {
+    snprintf(uptimeStr, sizeof(uptimeStr), "%lud %luh", upSec / 86400, (upSec % 86400) / 3600);
+  }
+
+  // Build HTML directly — small, no external deps
+  String html;
+  html.reserve(800);
+  html += F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<meta http-equiv='refresh' content='30'>"
+            "<title>Water Tank</title></head>"
+            "<body style='margin:0;min-height:100vh;display:flex;align-items:center;"
+            "justify-content:center;font-family:system-ui,sans-serif;background:");
+  html += bgColor;
+  html += F(";color:#fff;text-align:center'>"
+            "<div><h2 style='margin:0 0 8px;font-size:1rem;opacity:.7'>");
+  html += config.name;
+  html += F("</h2><div style='font-size:4.5rem;font-weight:900;line-height:1'>");
+  html += String((int)level);
+  html += F("%</div><div style='font-size:1rem;margin:8px 0;opacity:.8'>");
+  html += statusText;
+  html += F("</div><div style='font-size:.8rem;opacity:.6;margin-top:16px'>");
+  html += String(dist, 1);
+  html += F(" cm &bull; Up: ");
+  html += uptimeStr;
+  html += F(" &bull; RSSI: ");
+  html += String(WiFi.RSSI());
+  html += F(" dBm</div><div style='font-size:.65rem;opacity:.4;margin-top:8px'>"
+            "Auto-refresh 30s</div></div></body></html>");
+
+  server.send(200, "text/html", html);
 }
 
 // ─── Setup Dashboard Routes (Normal Mode) ────────────────────
 inline void setupRoutes() {
-  // Serve gzipped dashboard
+  // Serve simple dashboard
   server.on("/", HTTP_GET, []() {
-    server.sendHeader("Content-Encoding", "gzip");
-    server.send_P(200, "text/html", (const char *)DASHBOARD_GZ,
-                  DASHBOARD_GZ_LEN);
-  });
-
-  // API: Current status
-  server.on("/api/status", HTTP_GET, []() {
-    StaticJsonDocument<256> doc;
-    doc["level"] = round(currentLevel * 10) / 10.0;
-    doc["rawLevel"] = round(calculateLevel(currentRawDistance) * 10) / 10.0;
-    doc["distance"] = round(currentDistance * 10) / 10.0;
-    doc["filling"] = isFilling;
-    doc["fillRate"] = round(fillRate * 100) / 100.0;
-    doc["eta"] = round(fillEta * 10) / 10.0;
-    doc["liters"] = round(currentLiters * 10) / 10.0;
-    doc["uptime"] = millis() / 1000;
-    doc["rssi"] = WiFi.RSSI();
-    doc["name"] = config.name;
-    // nowEpoch: browser will sync its real clock to device uptime
-    doc["nowEpoch"] = (unsigned long)(millis() / 1000);
-
-    String out;
-    serializeJson(doc, out);
-    server.send(200, "application/json", out);
-  });
-
-  // API: History
-  server.on("/api/history", HTTP_GET, []() {
-    String json = "{\"data\":[";
-    int start = (historyCount < HISTORY_SIZE) ? 0 : historyHead;
-    for (int i = 0; i < historyCount; i++) {
-      int idx = (start + i) % HISTORY_SIZE;
-      if (i > 0)
-        json += ",";
-      json += "{\"t\":";
-      json += historyBuf[idx].timestamp;
-      json += ",\"l\":";
-      json += String(historyBuf[idx].level, 1);
-      json += "}";
-    }
-    json += "]}";
-    server.send(200, "application/json", json);
-  });
-
-  // API: Get config
-  server.on("/api/config", HTTP_GET, []() {
-    StaticJsonDocument<512> doc;
-    doc["ssid"] = config.ssid;
-    doc["tankMin"] = config.tankEmpty;
-    doc["tankMax"] = config.tankFull;
-    doc["webhook"] = config.webhook;
-    doc["name"] = config.name;
-    doc["tankGirth"] = config.tankGirth;
-    doc["tankCount"] = config.tankCount;
-
-    String out;
-    serializeJson(doc, out);
-    server.send(200, "application/json", out);
-  });
-
-  // API: Save config
-  server.on("/api/config", HTTP_POST, []() {
-    if (!server.hasArg("plain")) {
-      server.send(400, "application/json",
-                  "{\"ok\":false,\"error\":\"No body\"}");
-      return;
-    }
-
-    StaticJsonDocument<512> doc;
-    DeserializationError err = deserializeJson(doc, server.arg("plain"));
-    if (err) {
-      server.send(400, "application/json",
-                  "{\"ok\":false,\"error\":\"Bad JSON\"}");
-      return;
-    }
-
-    // Update WiFi if provided
-    if (doc.containsKey("ssid") && strlen(doc["ssid"]) > 0) {
-      strncpy(config.ssid, doc["ssid"], sizeof(config.ssid) - 1);
-    }
-    if (doc.containsKey("pass") && strlen(doc["pass"]) > 0) {
-      strncpy(config.pass, doc["pass"], sizeof(config.pass) - 1);
-    }
-
-    // Update tank params
-    if (doc.containsKey("tankMin"))
-      config.tankEmpty = doc["tankMin"];
-    if (doc.containsKey("tankMax"))
-      config.tankFull = doc["tankMax"];
-
-    // Update webhook
-    if (doc.containsKey("webhook")) {
-      strncpy(config.webhook, doc["webhook"], sizeof(config.webhook) - 1);
-    }
-
-    // Update name
-    if (doc.containsKey("name")) {
-      strncpy(config.name, doc["name"], sizeof(config.name) - 1);
-    }
-
-    // Update tank girth
-    if (doc.containsKey("tankGirth"))
-      config.tankGirth = doc["tankGirth"];
-
-    // Update tank count
-    if (doc.containsKey("tankCount")) {
-      config.tankCount = doc["tankCount"];
-      if (config.tankCount == 0)
-        config.tankCount = 1;
-    }
-
-    saveConfigToEEPROM();
-    server.send(200, "application/json", "{\"ok\":true}");
-  });
-
-  // API: Factory reset
-  server.on("/api/reset", HTTP_POST, []() {
-    server.send(200, "application/json",
-                "{\"ok\":true,\"msg\":\"Resetting...\"}");
-    delay(500);
-    factoryReset();
+    serveDashboard();
   });
 
   // API: Remote restart
   server.on("/api/restart", HTTP_GET, []() {
-    server.send(200, "application/json",
-                "{\"ok\":true,\"msg\":\"Restarting...\"}");
+    server.send(200, "text/plain", "Restarting...");
     printLog("[SERVER] Restart requested via API");
     delay(500);
     ESP.restart();
@@ -274,96 +92,58 @@ inline void setupRoutes() {
 
   // 404 handler — serve dashboard for any unknown route
   server.onNotFound([]() {
-    server.sendHeader("Content-Encoding", "gzip");
-    server.send_P(200, "text/html", (const char *)DASHBOARD_GZ,
-                  DASHBOARD_GZ_LEN);
+    serveDashboard();
   });
 
-  printLog("[SERVER] Dashboard routes configured");
+  printLog("[SERVER] Routes configured (minimal)");
 }
 
 // ─── Setup Captive Portal Routes (AP Mode) ───────────────────
 inline void setupCaptivePortalRoutes() {
-  // Captive portal HTML
   server.on("/", HTTP_GET, []() {
-    String html = R"rawliteral(
-<!DOCTYPE html><html lang="en"><head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Water Tank Setup</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:linear-gradient(135deg,#0a0e1a,#1a1a3e);min-height:100vh;display:flex;align-items:center;justify-content:center;color:#e2e8f0}
-.card{background:rgba(30,42,58,.95);border:1px solid rgba(42,58,92,.5);border-radius:20px;padding:36px;max-width:380px;width:90%;backdrop-filter:blur(10px);box-shadow:0 20px 60px rgba(0,0,0,.5)}
-h1{font-size:1.4rem;text-align:center;margin-bottom:4px;background:linear-gradient(135deg,#06b6d4,#3b82f6);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.sub{text-align:center;color:#64748b;font-size:.8rem;margin-bottom:24px}
-label{display:block;font-size:.75rem;font-weight:600;color:#94a3b8;margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}
-input{width:100%;padding:12px 16px;background:#111827;border:1px solid #2a3a5c;border-radius:10px;color:#e2e8f0;font-size:.95rem;margin-bottom:16px;transition:border .2s}
-input:focus{outline:none;border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
-button{width:100%;padding:14px;background:linear-gradient(135deg,#3b82f6,#06b6d4);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;transition:transform .2s,box-shadow .2s}
-button:hover{transform:translateY(-2px);box-shadow:0 8px 25px rgba(59,130,246,.3)}
-.emoji{font-size:2.5rem;text-align:center;margin-bottom:12px}
-.msg{text-align:center;padding:12px;border-radius:8px;margin-top:12px;font-size:.85rem;display:none}
-.msg.ok{display:block;background:rgba(16,185,129,.1);border:1px solid rgba(16,185,129,.3);color:#10b981}
-.msg.err{display:block;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);color:#ef4444}
-</style></head><body>
-<div class="card">
-<div class="emoji">💧</div>
-<h1>Water Tank Setup</h1>
-<p class="sub">Connect your water tank monitor to WiFi</p>
-<form id="wf" onsubmit="return submitWifi(event)">
-<label>WiFi Network (SSID)</label>
-<input type="text" id="ssid" placeholder="Enter your WiFi name" required>
-<label>Password</label>
-<input type="password" id="pass" placeholder="Enter WiFi password">
-<button type="submit">Connect</button>
-</form>
-<div class="msg" id="msg"></div>
-</div>
-<script>
-async function submitWifi(e){
-e.preventDefault();
-const m=document.getElementById('msg');
-m.className='msg';m.style.display='none';
-try{
-const r=await fetch('/api/wifi',{method:'POST',headers:{'Content-Type':'application/json'},
-body:JSON.stringify({ssid:document.getElementById('ssid').value,pass:document.getElementById('pass').value})});
-const d=await r.json();
-if(d.ok){m.className='msg ok';m.textContent='Saved! Device will restart and connect to your WiFi.';m.style.display='block';}
-else{m.className='msg err';m.textContent='Error saving. Try again.';m.style.display='block';}
-}catch(err){m.className='msg err';m.textContent='Connection error.';m.style.display='block';}
-}
-</script></body></html>
-)rawliteral";
+    String html = F(
+      "<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+      "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+      "<title>Water Tank Setup</title></head>"
+      "<body style='margin:0;min-height:100vh;display:flex;align-items:center;"
+      "justify-content:center;font-family:system-ui,sans-serif;background:#1a1a2e;color:#e0e0e0'>"
+      "<div style='background:#16213e;padding:30px;border-radius:12px;max-width:320px;width:90%'>"
+      "<h2 style='text-align:center;margin:0 0 20px'>Water Tank Setup</h2>"
+      "<form method='POST' action='/api/wifi'>"
+      "<label style='font-size:.75rem;display:block;margin-bottom:4px'>WiFi SSID</label>"
+      "<input name='ssid' style='width:100%;padding:8px;margin-bottom:12px;border-radius:6px;"
+      "border:1px solid #333;background:#0f3460;color:#fff' required>"
+      "<label style='font-size:.75rem;display:block;margin-bottom:4px'>Password</label>"
+      "<input name='pass' type='password' style='width:100%;padding:8px;margin-bottom:16px;"
+      "border-radius:6px;border:1px solid #333;background:#0f3460;color:#fff'>"
+      "<button type='submit' style='width:100%;padding:10px;background:#0d7377;color:#fff;"
+      "border:none;border-radius:6px;font-size:1rem;cursor:pointer'>Connect</button>"
+      "</form></div></body></html>"
+    );
     server.send(200, "text/html", html);
   });
 
   // API: Save WiFi credentials and restart
   server.on("/api/wifi", HTTP_POST, []() {
-    if (!server.hasArg("plain")) {
-      server.send(400, "application/json", "{\"ok\":false}");
-      return;
+    if (server.hasArg("ssid")) {
+      strncpy(config.ssid, server.arg("ssid").c_str(), sizeof(config.ssid) - 1);
     }
-
-    StaticJsonDocument<256> doc;
-    deserializeJson(doc, server.arg("plain"));
-
-    if (doc.containsKey("ssid")) {
-      strncpy(config.ssid, doc["ssid"], sizeof(config.ssid) - 1);
-    }
-    if (doc.containsKey("pass")) {
-      strncpy(config.pass, doc["pass"], sizeof(config.pass) - 1);
+    if (server.hasArg("pass")) {
+      strncpy(config.pass, server.arg("pass").c_str(), sizeof(config.pass) - 1);
     }
 
     // Set defaults
-    if (config.tankEmpty == 0)
-      config.tankEmpty = 200;
-    if (config.tankFull == 0)
-      config.tankFull = 20;
+    if (config.tankEmpty == 0) config.tankEmpty = 200;
+    if (config.tankFull == 0) config.tankFull = 20;
     if (strlen(config.name) == 0)
       strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
 
     saveConfigToEEPROM();
-    server.send(200, "application/json", "{\"ok\":true}");
+
+    server.send(200, "text/html",
+      "<html><body style='background:#1a1a2e;color:#fff;text-align:center;"
+      "font-family:system-ui;padding-top:40vh'>"
+      "<h2>Saved! Restarting...</h2></body></html>");
 
     delay(1000);
     ESP.restart();

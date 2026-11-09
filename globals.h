@@ -1,7 +1,7 @@
 /*
  * globals.h — Shared constants, types, and extern declarations
  * =============================================================
- * Central definitions used by all modules in the Water Tank firmware.
+ * Minimal version: sensor + web dashboard + OTA + restart
  */
 
 #ifndef GLOBALS_H
@@ -24,7 +24,7 @@
 // Byte 33-96:   WiFi Password (64 bytes)
 // Byte 97-98:   Tank empty distance (cm) [uint16]
 // Byte 99-100:  Tank full distance (cm) [uint16]
-// Byte 101-356: Webhook URL (256 bytes)
+// Byte 101-356: Webhook URL (256 bytes) [kept for EEPROM compat]
 // Byte 357-388: Device name (32 bytes)
 // Byte 389-420: Firmware version string (32 bytes)
 // Byte 421-422: Tank girth/circumference (cm) [uint16]
@@ -39,23 +39,11 @@
 #define MDNS_NAME "watertank"
 
 // ─── Sensor Constants ────────────────────────────────────────
-// Pipeline: 3-sample burst every 60s → 5 readings accumulated → median published every 5 min
-#define SENSOR_READ_INTERVAL 60000  // One 3-sample burst per minute (ms)
-#define SENSOR_INTERVAL      300000 // Publish median of 5 readings every 5 min (ms)
-#define FILTER_BUFFER_SIZE   5      // Exactly 5 slots: one per minute over 5 minutes
+// Simple pipeline: read every 30s, publish immediately
+#define SENSOR_INTERVAL 30000 // Read + publish every 30 seconds
 
 // ─── Sensor Filtering Constants ──────────────────────────────
-#define SPIKE_THRESHOLD 5.0   // Max allowed jump (cm) from last valid
-#define EMA_ALPHA 0.3         // Exponential moving average factor (0-1)
-// FILTER_BUFFER_SIZE is defined above in Sensor Constants (5 slots)
-
-// ─── Fill Detection Constants ────────────────────────────────
-#define FILL_WINDOW 10     // Lookback window (readings)
-#define FILL_THRESHOLD 3.0 // >3% rise in window = filling
-
-// ─── Logging & History ───────────────────────────────────────
-#define LOG_INTERVAL 300000 // Log to Google Sheets every 5 min
-#define HISTORY_SIZE 288    // 24h at 5-min intervals
+#define SPIKE_THRESHOLD 5.0 // Max allowed jump (cm) from last valid
 
 // ─── OTA API Endpoints ──────────────────────────────────────
 #define OTA_VERSION_CHECK_URL                                                  \
@@ -66,7 +54,7 @@
 #define baseLoggingUrl "http://oms-macbook-air.local:8080/api/v1/device/logs"
 
 // ─── Default Firmware Version ────────────────────────────────
-#define DEFAULT_FIRMWARE_VERSION "1.0.0"
+#define DEFAULT_FIRMWARE_VERSION "2.0.0"
 
 // ─── Config Struct ───────────────────────────────────────────
 struct Config {
@@ -74,20 +62,13 @@ struct Config {
   char pass[65];
   uint16_t tankEmpty; // Distance when tank is empty (sensor to bottom)
   uint16_t tankFull;  // Distance when tank is full (sensor to water surface)
-  char webhook[257];
+  char webhook[257];  // Kept for EEPROM layout compatibility
   char name[33];
   uint16_t tankGirth; // Tank circumference in cm
   uint8_t tankCount;  // Number of connected tanks
 };
 
-// ─── History Entry ───────────────────────────────────────────
-struct HistoryEntry {
-  uint32_t timestamp;
-  float level;
-};
-
 // ─── Global State (extern declarations) ──────────────────────
-// Defined in water-tank-info.ino
 extern ESP8266WebServer server;
 extern Config config;
 extern bool apMode;
@@ -95,32 +76,10 @@ extern bool apMode;
 // Sensor state
 extern float currentDistance;
 extern float currentLevel;
-extern float currentLiters;
 extern unsigned long lastSensorRead;
 
 // Sensor filter state
-extern float filterBuffer[];
-extern int filterBufIdx;
-extern int filterBufCount;
 extern float lastValidDistance;
-extern float currentRawDistance;
 extern int spikeCount;
-extern unsigned long lastInternalRead;
-
-// Fill detection state
-extern float levelHistory[FILL_WINDOW];
-extern int levelHistIdx;
-extern bool isFilling;
-extern float fillRate;
-extern float fillEta;
-extern unsigned long lastFillCheck;
-
-// History buffer
-extern HistoryEntry historyBuf[HISTORY_SIZE];
-extern int historyHead;
-extern int historyCount;
-
-// Logging
-extern unsigned long lastLogTime;
 
 #endif // GLOBALS_H
