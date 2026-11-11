@@ -12,6 +12,8 @@
 #include "globals.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
+#include <lwip/etharp.h>
+#include <lwip/netif.h>
 
 // ─── Connect to WiFi (STA Mode) ─────────────────────────────
 inline bool connectWiFi() {
@@ -22,6 +24,11 @@ inline bool connectWiFi() {
   // that credentials are not written to flash on every connect.
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
+  // Default modem sleep makes the radio miss incoming packets (ARP requests,
+  // TCP SYNs). Outgoing traffic like MQTT keeps working, but after a while the
+  // router drops the device from its ARP table and the web page stops
+  // loading. Keep the radio awake: this device is mains powered.
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.setAutoReconnect(true);
   WiFi.begin(config.ssid, config.pass);
 
@@ -101,6 +108,23 @@ inline void maintainMDNS() {
   } else if (connected && mdnsRunning) {
     // Normal operation — pump the mDNS stack
     MDNS.update();
+  }
+}
+
+// ─── Keep the router's ARP entry fresh (call from loop) ─────
+// Sends a gratuitous ARP every 60 s so the router always knows which MAC owns
+// our IP. Without it, some routers forget the device after a day or two and
+// inbound connections (the dashboard) fail while outbound MQTT still works.
+inline void maintainArp() {
+  static unsigned long lastArp = 0;
+  unsigned long now = millis();
+  if (now - lastArp < 60000UL) return;
+  lastArp = now;
+  if (WiFi.status() != WL_CONNECTED) return;
+  for (netif *n = netif_list; n; n = n->next) {
+    if (netif_is_up(n) && netif_is_link_up(n) && n->hwaddr_len == ETH_HWADDR_LEN &&
+        !ip4_addr_isany_val(*netif_ip4_addr(n)))
+      etharp_gratuitous(n);
   }
 }
 

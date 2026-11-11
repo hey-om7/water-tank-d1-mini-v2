@@ -143,7 +143,10 @@ void loop() {
 
   server.handleClient();
 
-  if (!apMode) maintainMDNS();
+  if (!apMode) {
+    maintainMDNS();
+    maintainArp();
+  }
 
   unsigned long now = millis();
 
