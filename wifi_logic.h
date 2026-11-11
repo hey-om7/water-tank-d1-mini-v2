@@ -8,13 +8,15 @@
 #ifndef WIFI_LOGIC_H
 #define WIFI_LOGIC_H
 
+#include "custom_mqtt_logging.h"
 #include "globals.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 
 // ─── Connect to WiFi (STA Mode) ─────────────────────────────
 inline bool connectWiFi() {
-  printLog("[WIFI] Connecting to: %s", config.ssid);
+  LOGI("WIFI", "connecting to '%s'", config.ssid);
+  Crumbs::stage("wifi-connect");
 
   // IMPORTANT: persistent(false) MUST be called before begin() so
   // that credentials are not written to flash on every connect.
@@ -26,17 +28,14 @@ inline bool connectWiFi() {
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED) {
     if (millis() - start > WIFI_CONNECT_TIMEOUT) {
-      printLog(" FAILED");
-      printLog("[WIFI] Connection timed out");
+      LOGE("WIFI", "connection to '%s' timed out after %lums (status=%d)", config.ssid,
+           static_cast<unsigned long>(WIFI_CONNECT_TIMEOUT), static_cast<int>(WiFi.status()));
       return false;
     }
     delay(500);
-    printLog(".");
   }
-  printLog(" OK");
-  // NB: use "%s" so IP text is never interpreted as a printf format.
-  printLog("[WIFI] IP Address: %s", WiFi.localIP().toString().c_str());
-  printLog("[WIFI] Signal strength (RSSI): %d dBm", WiFi.RSSI());
+  LOGI("WIFI", "connected in %lums: ip=%s rssi=%d dBm ch=%d bssid=%s", static_cast<unsigned long>(millis() - start),
+       WiFi.localIP().toString().c_str(), WiFi.RSSI(), WiFi.channel(), WiFi.BSSIDstr().c_str());
   return true;
 }
 
@@ -50,9 +49,8 @@ inline void startAP() {
   WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
 
   WiFi.softAP(AP_SSID, AP_PASS);
-  // NB: "%s" prevents the IP text from being treated as a printf format.
-  printLog("[WIFI] AP Mode started. IP: %s",
-           WiFi.softAPIP().toString().c_str());
+  LOGW("WIFI", "setup portal started: SSID '%s' at http://%s", AP_SSID,
+       WiFi.softAPIP().toString().c_str());
 }
 
 // ─── mDNS running-state flag ────────────────────────────────
@@ -71,11 +69,11 @@ inline bool setupMDNS() {
   if (MDNS.begin(MDNS_NAME)) {
     // Advertise HTTP service so mDNS browsers and clients can discover it
     MDNS.addService("http", "tcp", 80);
-    printLog("[WIFI] mDNS started: http://%s.local", MDNS_NAME);
+    LOGI("WIFI", "mDNS started: http://%s.local", MDNS_NAME);
     mdnsRunningRef() = true;
     return true;
   }
-  printLog("[WIFI] mDNS failed to start");
+  LOGW("WIFI", "mDNS failed to start");
   mdnsRunningRef() = false;
   return false;
 }
@@ -104,6 +102,29 @@ inline void maintainMDNS() {
     // Normal operation — pump the mDNS stack
     MDNS.update();
   }
+}
+
+// ─── Wi-Fi event logging ─────────────────────────────────────
+// Logs every drop with the 802.11 reason code (e.g. 2/15 = auth, 8 = left,
+// 200 = beacon timeout, 201 = AP not found, 202 = auth failed) and every
+// reconnect with how long the link was down.
+inline void setupWifiEvents() {
+  static WiFiEventHandler onDisc, onIp;
+  static uint32_t downSince = 0;
+  static uint32_t drops = 0;
+  onDisc = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected &e) {
+    if (downSince) return; // already down: the SDK repeats this every retry
+    downSince = millis() ? millis() : 1;
+    ++drops;
+    LOGW("WIFI", "disconnected from '%s' reason=%d (drop #%u, up %lus)", e.ssid.c_str(), static_cast<int>(e.reason),
+         static_cast<unsigned>(drops), static_cast<unsigned long>(millis() / 1000));
+  });
+  onIp = WiFi.onStationModeGotIP([](const WiFiEventStationModeGotIP &e) {
+    if (!downSince) return; // first connect is logged by connectWiFi()
+    LOGI("WIFI", "reconnected after %lus: ip=%s", static_cast<unsigned long>((millis() - downSince) / 1000),
+         e.ip.toString().c_str());
+    downSince = 0;
+  });
 }
 
 // ─── Get Device MAC Address ──────────────────────────────────

@@ -1,15 +1,16 @@
 /*
  * config_logic.h — EEPROM Configuration Management
  * ==================================================
- * Read/write device config (WiFi, tank params, webhook, name)
+ * Read/write device config (WiFi, tank params, name)
  * from EEPROM. Includes factory reset functionality.
+ * Log-level masks (bytes 424-426) are managed by custom_mqtt_logging.h.
  */
 
 #ifndef CONFIG_LOGIC_H
 #define CONFIG_LOGIC_H
 
 #include "globals.h"
-#include "customHttpLogging.h"
+#include "custom_mqtt_logging.h"
 #include <EEPROM.h>
 
 // ─── Load Config from EEPROM ─────────────────────────────────
@@ -17,7 +18,7 @@ inline void loadConfig() {
   memset(&config, 0, sizeof(config));
 
   if (EEPROM.read(0) != EEPROM_MAGIC) {
-    printLog("[CONFIG] No saved config found");
+    LOGW("CONFIG", "no saved config in EEPROM - using defaults (setup portal will open)");
     config.tankEmpty = 200; // Default: 200cm when empty
     config.tankFull = 20;   // Default: 20cm when full
     strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
@@ -37,11 +38,6 @@ inline void loadConfig() {
   // Read tank parameters
   config.tankEmpty = EEPROM.read(97) | (EEPROM.read(98) << 8);
   config.tankFull = EEPROM.read(99) | (EEPROM.read(100) << 8);
-
-  // Read webhook URL
-  for (int i = 0; i < 256; i++)
-    config.webhook[i] = EEPROM.read(101 + i);
-  config.webhook[256] = '\0';
 
   // Read device name
   for (int i = 0; i < 32; i++)
@@ -64,10 +60,9 @@ inline void loadConfig() {
   if (strlen(config.name) == 0)
     strncpy(config.name, "WaterTank", sizeof(config.name) - 1);
 
-  printLog(
-      "[CONFIG] Loaded: SSID=%s, Empty=%dcm, Full=%dcm, Girth=%dcm, Tanks=%d\n",
-      config.ssid, config.tankEmpty, config.tankFull, config.tankGirth,
-      config.tankCount);
+  LOGI("CONFIG", "loaded: name=%s SSID=%s empty=%dcm full=%dcm girth=%dcm tanks=%d",
+       config.name, config.ssid, config.tankEmpty, config.tankFull, config.tankGirth,
+       config.tankCount);
 }
 
 // ─── Save Config to EEPROM ───────────────────────────────────
@@ -84,8 +79,6 @@ inline void saveConfigToEEPROM() {
   EEPROM.write(99, config.tankFull & 0xFF);
   EEPROM.write(100, (config.tankFull >> 8) & 0xFF);
 
-  for (int i = 0; i < 256; i++)
-    EEPROM.write(101 + i, config.webhook[i]);
   for (int i = 0; i < 32; i++)
     EEPROM.write(357 + i, config.name[i]);
 
@@ -97,17 +90,16 @@ inline void saveConfigToEEPROM() {
   EEPROM.write(423, config.tankCount);
 
   EEPROM.commit();
-  printLog("[CONFIG] Saved to EEPROM");
+  LOGI("CONFIG", "saved to EEPROM");
 }
 
 // ─── Factory Reset ───────────────────────────────────────────
 inline void factoryReset() {
-  printLog("[CONFIG] === FACTORY RESET ===");
+  LOGW("CONFIG", "=== FACTORY RESET ===");
   for (int i = 0; i < EEPROM_SIZE; i++)
     EEPROM.write(i, 0);
   EEPROM.commit();
-  delay(500);
-  ESP.restart();
+  Diag::restart("factory reset");
 }
 
 #endif // CONFIG_LOGIC_H

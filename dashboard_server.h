@@ -2,14 +2,16 @@
  * dashboard_server.h — Minimal HTTP Server
  * ==========================================
  * Simple web page showing water level, auto-refreshes every 30s.
- * Retains: /api/restart, captive portal for AP mode.
- * No ArduinoJson, no Google Sheets, no history, no heavy CSS.
+ * Routes: /  /config (settings form)  /api/config  /api/status
+ *         /api/restart  + captive portal for AP mode.
+ * No ArduinoJson, no history, no heavy CSS.
  */
 
 #ifndef DASHBOARD_SERVER_H
 #define DASHBOARD_SERVER_H
 
 #include "config_logic.h"
+#include "custom_mqtt_logging.h"
 #include "globals.h"
 #include "sensor_logic.h"
 
@@ -75,6 +77,63 @@ inline void serveDashboard() {
   server.send(200, "text/html", html);
 }
 
+// ─── Settings form (name + tank calibration) ─────────────────
+inline void serveConfigPage() {
+  String html;
+  html.reserve(1400);
+  html += F("<!DOCTYPE html><html><head><meta charset='UTF-8'>"
+            "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+            "<title>Water Tank Settings</title><style>"
+            "body{font-family:system-ui,sans-serif;background:#1a1a2e;color:#e0e0e0;margin:0;padding:20px}"
+            "form{max-width:360px;margin:auto}label{display:block;font-size:.75rem;margin:10px 0 4px}"
+            "input{width:100%;padding:8px;border-radius:6px;border:1px solid #333;background:#0f3460;color:#fff;box-sizing:border-box}"
+            "button{width:100%;margin-top:16px;padding:10px;background:#0d7377;color:#fff;border:none;border-radius:6px}"
+            "</style></head><body><form method='POST' action='/api/config'><h2>Settings</h2>");
+  html += F("<label>Device name</label><input name='name' maxlength='32' value='");
+  html += config.name;
+  html += F("'><label>Empty distance (cm, sensor to bottom)</label><input name='tankMin' type='number' value='");
+  html += String(config.tankEmpty);
+  html += F("'><label>Full distance (cm, sensor to full water)</label><input name='tankMax' type='number' value='");
+  html += String(config.tankFull);
+  html += F("'><label>Tank girth (cm)</label><input name='tankGirth' type='number' value='");
+  html += String(config.tankGirth);
+  html += F("'><label>Number of tanks</label><input name='tankCount' type='number' min='1' value='");
+  html += String(config.tankCount);
+  html += F("'><button type='submit'>Save</button></form></body></html>");
+  server.send(200, "text/html", html);
+}
+
+// ─── Save settings (form fields or query args) ───────────────
+inline void handleConfigSave() {
+  bool calibrationChanged = false;
+  if (server.hasArg("name") && server.arg("name").length()) {
+    strncpy(config.name, server.arg("name").c_str(), sizeof(config.name) - 1);
+    config.name[sizeof(config.name) - 1] = '\0';
+  }
+  if (server.hasArg("tankMin") && server.arg("tankMin").toInt() > 0) {
+    config.tankEmpty = server.arg("tankMin").toInt();
+    calibrationChanged = true;
+  }
+  if (server.hasArg("tankMax") && server.arg("tankMax").toInt() > 0) {
+    config.tankFull = server.arg("tankMax").toInt();
+    calibrationChanged = true;
+  }
+  if (server.hasArg("tankGirth")) config.tankGirth = server.arg("tankGirth").toInt();
+  if (server.hasArg("tankCount")) {
+    long c = server.arg("tankCount").toInt();
+    config.tankCount = c > 0 && c < 255 ? c : 1;
+  }
+  if (config.tankEmpty <= config.tankFull)
+    LOGW("CONFIG", "empty distance (%u) should be larger than full distance (%u)", config.tankEmpty,
+         config.tankFull);
+  saveConfigToEEPROM();
+  if (calibrationChanged) resetLevelSmoothing(); // re-home to the new calibration
+  LOGI("CONFIG", "settings saved via web: name=%s empty=%u full=%u girth=%u tanks=%u", config.name,
+       config.tankEmpty, config.tankFull, config.tankGirth, config.tankCount);
+  server.sendHeader("Location", "/", true);
+  server.send(303, "text/plain", "Saved");
+}
+
 // ─── Setup Dashboard Routes (Normal Mode) ────────────────────
 inline void setupRoutes() {
   // Serve simple dashboard
@@ -82,20 +141,45 @@ inline void setupRoutes() {
     serveDashboard();
   });
 
+  // Settings
+  server.on("/config", HTTP_GET, []() { serveConfigPage(); });
+  server.on("/api/config", HTTP_POST, []() { handleConfigSave(); });
+  server.on("/api/config", HTTP_GET, []() {
+    char out[200];
+    snprintf(out, sizeof out,
+             "{\"name\":\"%s\",\"ssid\":\"%s\",\"tankMin\":%u,\"tankMax\":%u,\"tankGirth\":%u,"
+             "\"tankCount\":%u}",
+             config.name, config.ssid, config.tankEmpty, config.tankFull, config.tankGirth, config.tankCount);
+    server.send(200, "application/json", out);
+  });
+
+  // Status (JSON)
+  server.on("/api/status", HTTP_GET, []() {
+    char out[240];
+    snprintf(out, sizeof out,
+             "{\"level\":%.1f,\"distance\":%.1f,\"filling\":%s,\"fillRate\":%.2f,\"uptime\":%lu,"
+             "\"heap\":%u,\"rssi\":%d,\"mqtt\":%s,\"fw\":\"%s\"}",
+             currentLevel, currentDistance, isFilling ? "true" : "false", fillRate,
+             static_cast<unsigned long>(millis() / 1000), ESP.getFreeHeap(), WiFi.RSSI(),
+             RemoteLog::connected() ? "true" : "false", FW_VERSION);
+    server.send(200, "application/json", out);
+  });
+
   // API: Remote restart
   server.on("/api/restart", HTTP_GET, []() {
     server.send(200, "text/plain", "Restarting...");
-    printLog("[SERVER] Restart requested via API");
+    LOGW("SERVER", "restart requested via /api/restart from %s", server.client().remoteIP().toString().c_str());
     delay(500);
-    ESP.restart();
+    Diag::restart("restart via /api/restart");
   });
 
   // 404 handler — serve dashboard for any unknown route
   server.onNotFound([]() {
+    LOGD("SERVER", "unknown route %s -> dashboard", server.uri().c_str());
     serveDashboard();
   });
 
-  printLog("[SERVER] Routes configured (minimal)");
+  LOGI("SERVER", "dashboard routes configured");
 }
 
 // ─── Setup Captive Portal Routes (AP Mode) ───────────────────
@@ -116,6 +200,7 @@ inline void setupCaptivePortalRoutes() {
       "<label style='font-size:.75rem;display:block;margin-bottom:4px'>Password</label>"
       "<input name='pass' type='password' style='width:100%;padding:8px;margin-bottom:16px;"
       "border-radius:6px;border:1px solid #333;background:#0f3460;color:#fff'>"
+
       "<button type='submit' style='width:100%;padding:10px;background:#0d7377;color:#fff;"
       "border:none;border-radius:6px;font-size:1rem;cursor:pointer'>Connect</button>"
       "</form></div></body></html>"
@@ -131,6 +216,7 @@ inline void setupCaptivePortalRoutes() {
     if (server.hasArg("pass")) {
       strncpy(config.pass, server.arg("pass").c_str(), sizeof(config.pass) - 1);
     }
+    LOGI("SERVER", "setup portal: Wi-Fi '%s' saved", config.ssid);
 
     // Set defaults
     if (config.tankEmpty == 0) config.tankEmpty = 200;
@@ -146,7 +232,7 @@ inline void setupCaptivePortalRoutes() {
       "<h2>Saved! Restarting...</h2></body></html>");
 
     delay(1000);
-    ESP.restart();
+    Diag::restart("new Wi-Fi credentials from setup portal");
   });
 
   // Captive portal: redirect all unknown requests to root
@@ -155,7 +241,7 @@ inline void setupCaptivePortalRoutes() {
     server.send(302, "text/plain", "");
   });
 
-  printLog("[SERVER] Captive portal routes configured");
+  LOGI("SERVER", "captive portal routes configured");
 }
 
 #endif // DASHBOARD_SERVER_H

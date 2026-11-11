@@ -1,23 +1,25 @@
 /*
- * Water Tank Monitoring System — MINIMAL
+ * Water Tank Monitoring System
  * ========================================
  * D1 Mini V2 (ESP8266) + JSN-SR04T Ultrasonic Sensor
  *
- * Stripped-down firmware to prevent random shutoffs:
  *  - WiFi auto-connect with AP fallback & captive portal
  *  - mDNS (watertank.local)
- *  - Simple water level monitoring (3-sample median + spike reject)
- *  - Plain HTML dashboard (auto-refresh every 30s)
- *  - OTA auto-update with semantic versioning
- *  - Remote restart via /api/restart
+ *  - Water level monitoring (3-sample median + spike reject, every 30 s)
+ *  - Plain HTML dashboard (auto-refresh every 30s) + /config settings page
+ *  - On-device level smoothing: velocity clamp -> deadzone -> EMA
+ *  - Fill detection (rise over the last 50 min)
+ *  - FirmwareManager integration:
+ *      * OTA updates (boot + every 6 h)
+ *      * Remote logging over MQTT; levels set in Devices -> Logging
+ *      * Remote restart from the console
+ *  - Reset diagnostics: every boot logs WHY the previous session ended
+ *    (power loss, crash, watchdog, deliberate restart + last stage + heap)
  *
- * Removed to reduce load:
- *  - Google Sheets logging (HTTPS/BearSSL — huge RAM consumer)
- *  - ArduinoJson library
- *  - Heavy gzipped dashboard with animations
- *  - History buffer (288 entries)
- *  - Fill detection & rate calculation
- *  - EMA filtering & 5-min median pipeline
+ * Logging: use LOGE / LOGW / LOGI / LOGD(tag, fmt, ...), never Serial.print.
+ * Every deliberate restart goes through Diag::restart("reason").
+ *
+ * Required library: "WebSockets" by Markus Sattler (Library Manager).
  *
  * Wiring:
  *  JSN-SR04T Trigger → D1 (GPIO5)
@@ -26,10 +28,11 @@
  *  GND               → GND
  */
 
-#include "config_logic.h"
-#include "customHttpLogging.h"
-#include "dashboard_server.h"
 #include "globals.h"
+#include "diagnostics.h"
+#include "custom_mqtt_logging.h"
+#include "config_logic.h"
+#include "dashboard_server.h"
 #include "ota_update_logic.h"
 #include "sensor_logic.h"
 #include "wifi_logic.h"
@@ -48,57 +51,87 @@ unsigned long lastSensorRead = 0;
 float lastValidDistance = -1;
 int spikeCount = 0;
 
+// Fill detection state
+bool isFilling = false;
+float fillRate = 0;
+
+// ─── FirmwareManager hooks ───────────────────────────────────
+// Runs right before a firmware download starts.
+static void appBeforeFlash() {
+  LOGI("APP", "preparing for firmware update (level=%.1f%%)", currentLevel);
+}
+
+// Runs right before a restart requested from the FirmwareManager console.
+static void appBeforeRestart() {
+  LOGI("APP", "preparing for remote restart (level=%.1f%%)", currentLevel);
+}
+
 // ══════════════════════════════════════════════════════════════
 //  SETUP
 // ══════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
   delay(100);
+  Serial.println();
 
   // Hardware watchdog
   ESP.wdtDisable();
   ESP.wdtEnable(WDTO_8S);
 
-  printLog("\n\n══════════════════════════════════════");
-  printLog("  Water Tank Monitor — MINIMAL v2.0");
-  printLog("══════════════════════════════════════");
+  // Read what the previous session left in RTC memory before anything else.
+  Crumbs::begin();
+
+  // EEPROM holds config + log levels; needed before the first log line.
+  EEPROM.begin(EEPROM_SIZE);
+  RemoteLog::init();
+
+  MqttLogging::setFirmwareVersion(OtaUpdates::currentVersion().c_str());
+  MqttLogging::setBeforeRestart(appBeforeRestart);
+  OtaUpdates::setBeforeFlash(appBeforeFlash);
+
+  LOGI("BOOT", "%s (%s) v%s booting - heap=%u core=%s sdk=%s", DEVICE_NAME, MODEL_NUMBER,
+       OtaUpdates::currentVersion().c_str(), ESP.getFreeHeap(), ESP.getCoreVersion().c_str(), ESP.getSdkVersion());
+  LOGI("BOOT", "Wi-Fi MAC %s  <- register this in FirmwareManager -> Devices", WiFi.macAddress().c_str());
+  LOGI("BOOT", "reset info: %s", ESP.getResetInfo().c_str());
+  Diag::reportBoot();
 
   // 1. Initialize sensor pins
   initSensor();
 
-  // 2. Initialize EEPROM and load config
-  EEPROM.begin(EEPROM_SIZE);
+  // 2. Load config
   loadConfig();
 
   // 3. Attempt WiFi connection
+  setupWifiEvents();
   if (strlen(config.ssid) > 0 && connectWiFi()) {
-    // 4. OTA update check
-    printLog("[BOOT] Checking for firmware updates...");
-    checkAndPerformOTA();
+    // 4. Start remote logging (boot lines buffered so far are sent)
+    MqttLogging::loop();
 
-    // 5. Setup mDNS
+    // 5. OTA update check (reboots if an update was installed)
+    OtaUpdates::loop();
+
+    // 6. Setup mDNS
     setupMDNS();
 
-    // 6. Setup dashboard routes
+    // 7. Setup dashboard routes
     setupRoutes();
   } else {
-    printLog("[BOOT] Starting Access Point for setup...");
+    LOGW("BOOT", "no Wi-Fi (%s) - starting access point for setup",
+         strlen(config.ssid) ? "connection failed" : "not configured");
     startAP();
     setupCaptivePortalRoutes();
   }
 
-  // 7. Start web server
+  // 8. Start web server
   server.begin();
 
-  // 8. Take initial sensor reading
-  printLog("[BOOT] Taking initial sensor reading...");
+  // 9. Take initial sensor reading
   takeSensorReading();
+  LOGI("SENSOR", "initial reading: %.1fcm level=%.1f%%", currentDistance, currentLevel);
 
-  printLog("\n══════════════════════════════════════");
-  printLog("  Boot complete — system running");
-  printLog("  Mode: %s", apMode ? "Access Point" : "WiFi Station");
-  printLog("  Free heap: %u bytes", ESP.getFreeHeap());
-  printLog("══════════════════════════════════════");
+  LOGI("BOOT", "boot complete in %lums - mode=%s heap=%u maxBlock=%u", millis(),
+       apMode ? "access point" : "station", ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
+  Crumbs::stage("loop");
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -106,6 +139,7 @@ void setup() {
 // ══════════════════════════════════════════════════════════════
 void loop() {
   ESP.wdtFeed();
+  Crumbs::stage("loop");
 
   server.handleClient();
 
@@ -119,8 +153,12 @@ void loop() {
     takeSensorReading();
   }
 
-  // ─── WiFi keep-alive (check every 30s) ─────────────────────
   if (!apMode) {
+    // ─── FirmwareManager: logging, remote restart, OTA ─────────
+    MqttLogging::loop();
+    OtaUpdates::loop();
+
+    // ─── WiFi keep-alive (check every 30s) ─────────────────────
     static unsigned long lastWifiCheck = 0;
     static uint8_t wifiFailCount = 0;
 
@@ -129,17 +167,20 @@ void loop() {
 
       if (WiFi.status() != WL_CONNECTED) {
         wifiFailCount++;
-        printLog("[WIFI] Not connected (fail #%u), reconnecting...", wifiFailCount);
+        LOGW("WIFI", "not connected (check #%u, status=%d), reconnecting", wifiFailCount,
+             static_cast<int>(WiFi.status()));
         WiFi.reconnect();
 
         if (wifiFailCount >= 6) { // 3 minutes
-          printLog("[WIFI] Persistent loss — rebooting.");
-          delay(200);
-          ESP.restart();
+          Diag::restart("Wi-Fi lost for 3 minutes");
         }
       } else {
+        if (wifiFailCount) LOGI("WIFI", "link OK again after %u failed checks", wifiFailCount);
         wifiFailCount = 0;
       }
     }
   }
+
+  // ─── Health line + RTC heap sample ─────────────────────────
+  Diag::loop();
 }
