@@ -68,7 +68,7 @@
 #define WS_MIN_FREE_HEAP 8000
 
 // --- Wi-Fi -------------------------------------------------------------------
-#define WIFI_CONNECT_TIMEOUT_MS   15000UL
+#define WIFI_CONNECT_TIMEOUT_MS   20000UL
 #define WIFI_PORTAL_TIMEOUT_MS    180000UL  // portal after a FAILED saved network, then reboot + retry
 #define WIFI_RECONNECT_INTERVAL_MS 30000UL  // link check while disconnected
 #define WIFI_LOST_RESTART_MS      (3UL * 60UL * 1000UL)  // reboot after this long without Wi-Fi

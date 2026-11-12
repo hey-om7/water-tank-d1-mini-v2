@@ -36,6 +36,9 @@ struct State {
   uint32_t downSince = 0;     // 0 = link up
   uint32_t lastRetry = 0;
   uint32_t drops = 0;
+  int lastReason = 0;         // last 802.11 disconnect reason
+  String lastError;           // shown on the setup portal after a failed join
+  bool sleeping = false;      // power saving currently applied
   WiFiEventHandler onDisc, onIp;
 };
 inline State& S() {
@@ -91,8 +94,39 @@ inline void announceArp() {
   }
 }
 
+inline const char* statusName(wl_status_t s) {
+  switch (s) {
+    case WL_IDLE_STATUS:     return "idle (associating / waiting for DHCP)";
+    case WL_NO_SSID_AVAIL:   return "network not found";
+    case WL_CONNECTED:       return "connected";
+    case WL_CONNECT_FAILED:  return "connect failed";
+    case WL_WRONG_PASSWORD:  return "wrong password";
+    case WL_DISCONNECTED:    return "disconnected";
+    default:                 return "unknown";
+  }
+}
+
+inline const char* reasonName(int r) {
+  switch (r) {
+    case 2:   return "auth expired";
+    case 4:   return "assoc expired";
+    case 8:   return "left network";
+    case 15:  return "4-way handshake timeout (usually wrong password)";
+    case 200: return "beacon timeout";
+    case 201: return "network not found";
+    case 202: return "auth failed (wrong password?)";
+    case 203: return "assoc failed";
+    case 204: return "handshake timeout (usually wrong password)";
+    default:  return "other";
+  }
+}
+
 inline void setupEvents() {
   S().onDisc = WiFi.onStationModeDisconnected([](const WiFiEventStationModeDisconnected& e) {
+    const int r = static_cast<int>(e.reason);
+    if (r != S().lastReason)  // every distinct reason, also while still connecting
+      Serial.printf("[W][WIFI] disconnect reason %d: %s\n", r, reasonName(r));
+    S().lastReason = r;
     if (S().downSince) return;  // the SDK repeats this on every retry
     S().downSince = millis() ? millis() : 1;
     S().mdnsUp = false;
@@ -108,27 +142,45 @@ inline void setupEvents() {
   });
 }
 
+/**
+ * Join the saved network. The radio is kept fully awake (no sleep) until an
+ * IP is assigned: with light/modem sleep active during association the
+ * ESP8266 misses EAPOL/DHCP replies, and phone hotspots in particular kick
+ * the station within seconds. Power saving is applied once connected.
+ */
 inline bool connectSaved() {
   const Settings::Config& c = Settings::get();
-  LOGI("WIFI", "connecting to '%s'", c.ssid);
+  LOGI("WIFI", "connecting to '%s' (ssid %u bytes, password %u chars)", c.ssid,
+       static_cast<unsigned>(strlen(c.ssid)), static_cast<unsigned>(strlen(c.pass)));
   Crumbs::stage("wifi-connect");
   WiFi.mode(WIFI_STA);
   WiFi.hostname(DEVICE_HOSTNAME);
-  applyPowerSave();
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setOutputPower(20.5f);  // full power while joining
   WiFi.setAutoReconnect(true);
   WiFi.begin(c.ssid, c.pass);
   const uint32_t t0 = millis();
+  wl_status_t last = WL_IDLE_STATUS;
   while (WiFi.status() != WL_CONNECTED) {
+    const wl_status_t st = WiFi.status();
+    if (st != last) {
+      LOGI("WIFI", "status after %lums: %s (%d)", static_cast<unsigned long>(millis() - t0), statusName(st),
+           static_cast<int>(st));
+      last = st;
+    }
     if (millis() - t0 > WIFI_CONNECT_TIMEOUT_MS) {
-      LOGE("WIFI", "could not join '%s' in %lus (status=%d)", c.ssid,
-           static_cast<unsigned long>(WIFI_CONNECT_TIMEOUT_MS / 1000), static_cast<int>(WiFi.status()));
+      S().lastError = String("Could not join '") + c.ssid + "': " + statusName(st);
+      if (S().lastReason) S().lastError += String(", reason ") + S().lastReason + " " + reasonName(S().lastReason);
+      LOGE("WIFI", "%s", S().lastError.c_str());
       return false;
     }
     ESP.wdtFeed();
     delay(100);
   }
-  LOGI("WIFI", "connected in %lums: ip=%s rssi=%d dBm ch=%d", static_cast<unsigned long>(millis() - t0),
-       WiFi.localIP().toString().c_str(), WiFi.RSSI(), WiFi.channel());
+  LOGI("WIFI", "connected in %lums: ip=%s gw=%s rssi=%d dBm ch=%d", static_cast<unsigned long>(millis() - t0),
+       WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(), WiFi.RSSI(), WiFi.channel());
+  applyPowerSave();
+  S().sleeping = true;
   return true;
 }
 
@@ -189,7 +241,7 @@ inline void runPortal(uint32_t timeoutMs) {
   dns.start(53, "*", ip);
   ESP8266WebServer web(80);
   bool saved = false;
-  String note;
+  String note = S().lastError;  // why the saved network failed (empty on first boot)
 
   web.on("/save", HTTP_POST, [&]() {
     const String ssid = web.arg("ssid");
@@ -252,6 +304,10 @@ inline void loop() {
   const uint32_t now = millis();
   if (connected()) {
     s.downSince = 0;
+    if (!s.sleeping) {  // back online: power saving again
+      detail::applyPowerSave();
+      s.sleeping = true;
+    }
     if (!s.mdnsUp) detail::startMdns();
     else MDNS.update();
     static uint32_t lastArp = 0;
@@ -262,6 +318,11 @@ inline void loop() {
     return;
   }
   if (!s.downSince) s.downSince = now ? now : 1;
+  if (s.sleeping) {  // rejoin with the radio fully awake (see connectSaved)
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+    WiFi.setOutputPower(20.5f);
+    s.sleeping = false;
+  }
   if (now - s.downSince >= WIFI_LOST_RESTART_MS) Diag::restart("Wi-Fi lost for too long");
   if (now - s.lastRetry >= WIFI_RECONNECT_INTERVAL_MS) {
     s.lastRetry = now;
