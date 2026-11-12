@@ -40,8 +40,8 @@
 #ifndef CUSTOM_MQTT_LOGGING_H
 #define CUSTOM_MQTT_LOGGING_H
 
-#include "diagnostics.h"
-#include "globals.h"
+#include "../config/globals.h"
+#include "../diag/crumbs.h"
 #include <Arduino.h>
 #include <EEPROM.h>
 #include <ESP8266WiFi.h>

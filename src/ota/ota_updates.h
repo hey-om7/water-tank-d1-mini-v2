@@ -1,5 +1,5 @@
 /*
- * ota_update_logic.h — OTA updates from FirmwareManager (ESP8266)
+ * ota_updates.h — OTA updates from FirmwareManager (ESP8266)
  * =================================================================
  * Flow (same device API every FirmwareManager model uses):
  *  1. GET <base>/api/v1/device/firmware/version?macAddress=<MAC>
@@ -23,8 +23,8 @@
 #ifndef OTA_UPDATE_LOGIC_H
 #define OTA_UPDATE_LOGIC_H
 
-#include "custom_mqtt_logging.h"
-#include "globals.h"
+#include "../logging/custom_mqtt_logging.h"
+#include "../config/globals.h"
 #include <EEPROM.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>

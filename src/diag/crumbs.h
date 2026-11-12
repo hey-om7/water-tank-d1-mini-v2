@@ -1,5 +1,5 @@
 /*
- * diagnostics.h — Breadcrumbs that survive a reset
+ * crumbs.h — Breadcrumbs that survive a reset
  * ==================================================
  * Keeps a small record in RTC user memory: what the firmware was doing
  * ("stage"), uptime and heap figures, and the reason for any deliberate
