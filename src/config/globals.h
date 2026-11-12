@@ -6,7 +6,7 @@
 //  Before the first USB flash:
 //    1. Tools -> Board: "LOLIN(WEMOS) D1 R2 & mini",
 //       Flash Size: "4MB (FS:1MB OTA:~1019KB)" (any layout with OTA space).
-//    2. Library Manager: install "WebSockets" by Markus Sattler.
+//    2. No extra libraries: the MQTT/WebSocket client is built in.
 //    3. Register this board in FirmwareManager -> Devices with its Wi-Fi MAC
 //       (printed on Serial at boot) under model TMM1V1.
 //    4. Bump FW_VERSION for every build you upload, and upload it with the
@@ -55,17 +55,24 @@
 // ESP8266 has ~40 KB of free heap, so these are smaller than on ESP32.
 #define REMOTE_LOG_LINE_MAX         200                    // bytes per line (server max 1024)
 #define REMOTE_LOG_BATCH_BYTES      768                    // max payload of one MQTT publish
-#define REMOTE_LOG_BUFFER_BYTES     (4 * 1024)             // backlog while offline
+#define REMOTE_LOG_BUFFER_BYTES     (3 * 1024)             // backlog while offline (heap is needed for TLS)
 #define REMOTE_LOG_FLUSH_MS         2000                   // max delay before a partial batch is sent
 #define REMOTE_LOG_RETRY_MS         10000                  // WebSocket reconnect back-off
 #define REMOTE_LOG_WATCHDOG_RESTART 1                      // reboot after 10 min offline with Wi-Fi up
 #define REMOTE_LOG_FALLBACK_MS      60000UL                // switch broker if the current one never connects
 #define REMOTE_LOG_PREFER_RETRY_MS  (10UL * 60UL * 1000UL) // retry the primary while on fallback
-// TLS (wss://) needs one large contiguous block. Below this the device does
-// not attempt a TLS connection, to avoid an out-of-memory crash.
+// After the broker REFUSES the login (rc 2/4/5), wait this long before trying
+// again. The server locks an IP out for 5 min after 10 failed logins in 5 min
+// (that would also block other devices behind the same router).
+#define REMOTE_LOG_REFUSED_BACKOFF_MS (5UL * 60UL * 1000UL)
+// TLS (wss://) needs one large contiguous block (16 KB receive buffer + BearSSL
+// state). Below this the device does not attempt a TLS connection.
 #define TLS_MIN_FREE_BLOCK 18000
-// Plain ws:// needs much less, but sending frames fails below this.
-#define WS_MIN_FREE_HEAP 8000
+// TLS (https:// and wss://): the ESP8266 has no CA bundle, so by default the
+// link is encrypted but the certificate is NOT verified. To pin it, put the
+// server certificate's SHA-1 fingerprint here ("AB:CD:...:EF") and update it
+// when the certificate is renewed.
+#define FM_TLS_FINGERPRINT ""
 
 // --- Wi-Fi -------------------------------------------------------------------
 #define WIFI_CONNECT_TIMEOUT_MS   20000UL
@@ -74,12 +81,16 @@
 #define WIFI_LOST_RESTART_MS      (3UL * 60UL * 1000UL)  // reboot after this long without Wi-Fi
 
 // --- Power saving (battery) --------------------------------------------------
+// Applied only while the MQTT session is up; the radio is fully awake while
+// joining Wi-Fi and while (re)connecting to the broker.
 // 0 = radio always on (highest draw, ~70 mA)
-// 1 = modem sleep: radio wakes for DTIM beacons (~15-20 mA average)
-// 2 = light sleep: modem sleep + CPU paused during delay() (lowest draw that
-//     still keeps the web page, MQTT and remote restart available)
-#define POWER_SAVE_MODE      2
-#define WIFI_LISTEN_INTERVAL 3     // wake every Nth DTIM beacon (1..10); higher = less power, slower replies
+// 1 = modem sleep: radio off between DTIM beacons (~15-20 mA average). The
+//     ESP8266 default; TCP/MQTT sessions stay up.
+// 2 = light sleep: also pauses the CPU in delay(). On the D1 mini this drops
+//     the MQTT session within seconds and makes the board stop answering
+//     ping/HTTP, so don't use it with remote logging.
+#define POWER_SAVE_MODE      1
+#define WIFI_LISTEN_INTERVAL 1     // wake every Nth DTIM beacon (1..10); >1 delays every incoming packet
 #define WIFI_TX_POWER_DBM    17.0f // 0..20.5; lower saves power if the signal is strong
 #define LOOP_IDLE_MS         50    // delay() per loop: this is where the chip sleeps
 // Gratuitous ARP keeps the router from forgetting a sleeping device (the

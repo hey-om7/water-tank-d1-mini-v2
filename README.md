@@ -49,7 +49,7 @@ then a velocity clamp (20 %/reading), a 0.5 % deadzone and an EMA (α 0.7).
 ## First flash (USB)
 
 1. Board: **LOLIN(WEMOS) D1 R2 & mini**, Flash Size **4MB (FS:1MB OTA:~1019KB)**.
-2. Library Manager: install **WebSockets** by Markus Sattler.
+2. No extra libraries are needed (the MQTT client is built in).
 3. Flash, open Serial Monitor at 115200 baud, copy the printed **Wi-Fi MAC**.
 4. FirmwareManager → **Devices → Add device**, enter the MAC, model `TMM1V1`.
 5. Join the `TMM1V1-SETUP` Wi-Fi from your phone and pick your network.
@@ -57,7 +57,7 @@ then a velocity clamp (20 %/reading), a 0.5 % deadzone and an EMA (α 0.7).
 
 ## Power
 
-`POWER_SAVE_MODE` in `globals.h`: `2` light sleep (default), `1` modem sleep, `0` always on.
+`POWER_SAVE_MODE` in `globals.h`: `1` modem sleep (default), `0` always on, `2` light sleep (drops the MQTT session on the D1 mini; not recommended). Power saving starts only once the MQTT session is up.
 The device stays connected so the web page, MQTT and remote restart keep working, so it can't
 deep-sleep. To cut sensor current between readings, switch its supply from a GPIO and set
 `SENSOR_POWER_PIN`.

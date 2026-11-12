@@ -33,7 +33,7 @@
 
 namespace OtaUpdates {
 
-enum class Status : uint8_t { IDLE, CHECKING, UP_TO_DATE, DOWNLOADING, FAILED, NOT_CONFIGURED };
+enum class Status : uint8_t { IDLE, CHECKING, UP_TO_DATE, DOWNLOADING, FAILED, NOT_CONFIGURED, NO_PARTITION };
 
 inline const char *statusName(Status s) {
   switch (s) {
@@ -42,6 +42,7 @@ inline const char *statusName(Status s) {
   case Status::DOWNLOADING: return "downloading";
   case Status::FAILED: return "failed";
   case Status::NOT_CONFIGURED: return "not_configured";
+  case Status::NO_PARTITION: return "no_partition";
   default: return "idle";
   }
 }
@@ -273,6 +274,12 @@ inline void checkNow() {
     St().status = Status::NOT_CONFIGURED;
     St().error = "set FM_PRIMARY_BASE_URL or FM_FALLBACK_HOST in globals.h";
     LOGW(TAG, "%s", St().error.c_str());
+    return;
+  }
+  if (ESP.getFreeSketchSpace() < ESP.getSketchSize()) {
+    St().status = Status::NO_PARTITION;
+    St().error = "not enough free flash for an OTA download: pick a Flash Size with OTA space and flash over USB";
+    LOGE(TAG, "%s", St().error.c_str());
     return;
   }
   if (WiFi.status() != WL_CONNECTED) {

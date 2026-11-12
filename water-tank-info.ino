@@ -12,7 +12,7 @@
 //    src/sensor/tank_sensor.h           distance -> % between the gaps, smoothing, fill detection
 //    src/web/dashboard.h                web UI + /api/status /api/config /api/restart
 //
-//  Required library: "WebSockets" by Markus Sattler (Library Manager).
+//  No extra libraries needed (MQTT over WebSocket client is built in).
 //  Wiring: Trig -> D1 (GPIO5), Echo -> D2 (GPIO4), VCC -> 5V, GND -> GND.
 //  Log with LOGE / LOGW / LOGI / LOGD, restart only via Diag::restart("reason").
 // ---------------------------------------------------------------------------

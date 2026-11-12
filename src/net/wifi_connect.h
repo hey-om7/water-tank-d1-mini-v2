@@ -179,9 +179,30 @@ inline bool connectSaved() {
   }
   LOGI("WIFI", "connected in %lums: ip=%s gw=%s rssi=%d dBm ch=%d", static_cast<unsigned long>(millis() - t0),
        WiFi.localIP().toString().c_str(), WiFi.gatewayIP().toString().c_str(), WiFi.RSSI(), WiFi.channel());
-  applyPowerSave();
-  S().sleeping = true;
+  // Stay awake: power saving starts only once the MQTT session is up (see loop()).
+  S().sleeping = false;
   return true;
+}
+
+/**
+ * Light/modem sleep only while the MQTT session is up (or the broker refused
+ * us and we're backing off). A sleeping radio buffers incoming packets for up
+ * to WIFI_LISTEN_INTERVAL beacons, which stalls the TLS handshake, the
+ * WebSocket upgrade and the CONNACK (the broker sends it in 1-byte frames),
+ * so the session never gets established.
+ */
+inline void updatePowerSave() {
+  const bool wantSleep = RemoteLog::connected() || RemoteLog::backingOff();
+  if (wantSleep == S().sleeping) return;
+  if (wantSleep) {
+    applyPowerSave();
+    LOGD("WIFI", "power saving on (MQTT up)");
+  } else {
+    WiFi.setSleepMode(WIFI_NONE_SLEEP);
+    WiFi.setOutputPower(20.5f);
+    LOGD("WIFI", "radio awake (MQTT connecting)");
+  }
+  S().sleeping = wantSleep;
 }
 
 inline String portalPage(const String& options, const String& note) {
@@ -304,10 +325,7 @@ inline void loop() {
   const uint32_t now = millis();
   if (connected()) {
     s.downSince = 0;
-    if (!s.sleeping) {  // back online: power saving again
-      detail::applyPowerSave();
-      s.sleeping = true;
-    }
+    detail::updatePowerSave();
     if (!s.mdnsUp) detail::startMdns();
     else MDNS.update();
     static uint32_t lastArp = 0;
