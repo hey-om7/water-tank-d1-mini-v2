@@ -45,38 +45,75 @@ inline State& S() {
 static const char kPage[] PROGMEM = R"HTML(<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0a1020">
 <title>Water Tank</title>
 <style>
-:root{--bg:#0f172a;--card:#1e293b;--line:#334155;--mute:#94a3b8;--fg:#e2e8f0;--c:#0ea5e9}
-*{box-sizing:border-box}body{margin:0;font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg);
-min-height:100vh;display:flex;justify-content:center;padding:24px 16px}
-main{width:100%;max-width:380px}
-header{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:16px}
-h1{font-size:1.1rem;margin:0;font-weight:600}.mute{color:var(--mute);font-size:.8rem}
-.card{background:var(--card);border-radius:16px;padding:20px;margin-bottom:12px}
-.tank{position:relative;height:260px;border:2px solid var(--line);border-radius:14px;overflow:hidden;background:#0b1222}
-.water{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(#38bdf8,#0369a1);transition:height 1.2s ease,background .6s}
-.pct{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-shadow:0 1px 6px #0009}
-.pct b{font-size:3.6rem;font-weight:800;line-height:1}.pct span{font-size:.85rem;margin-top:6px;letter-spacing:.08em}
-.row{display:flex;justify-content:space-between;padding:6px 0;font-size:.9rem;border-bottom:1px solid var(--line)}
-.row:last-child{border:0}.row span:first-child{color:var(--mute)}
-details summary{cursor:pointer;font-weight:600;list-style:none}details summary::after{content:" \25BE";color:var(--mute)}
-label{display:block;font-size:.8rem;color:var(--mute);margin:14px 0 6px}
-input{width:100%;padding:10px;border-radius:8px;border:1px solid var(--line);background:#0b1222;color:#fff;font-size:1rem}
-button{width:100%;margin-top:16px;padding:11px;border:0;border-radius:8px;background:var(--c);color:#fff;font-size:1rem;cursor:pointer}
-button.ghost{background:transparent;border:1px solid var(--line);color:var(--mute)}
-.hint{font-size:.75rem;color:var(--mute);margin-top:10px}#msg{min-height:1em}
+:root{--bg:#0a1020;--card:rgba(255,255,255,.045);--line:rgba(255,255,255,.08);--mute:#8a96ad;--fg:#eef2f8;
+--acc:#38bdf8;--a1:#7dd3fc;--a2:#0284c7;--ok:#34d399;--warn:#fbbf24;--bad:#f87171}
+*{box-sizing:border-box}
+body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;color:var(--fg);
+background:radial-gradient(120% 60% at 50% -10%,#16264a 0%,var(--bg) 60%) fixed;min-height:100vh;
+display:flex;justify-content:center;padding:28px 16px 40px;-webkit-font-smoothing:antialiased}
+main{width:100%;max-width:400px}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
+h1{font-size:1.25rem;margin:0;font-weight:650;letter-spacing:-.01em}
+.sub{color:var(--mute);font-size:.75rem;margin-top:3px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:999px;font-size:.7rem;
+font-weight:600;letter-spacing:.06em;background:var(--card);border:1px solid var(--line);color:var(--mute)}
+.pill i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.card{background:var(--card);border:1px solid var(--line);border-radius:22px;padding:20px;margin-bottom:14px;
+backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px)}
+.hero{display:flex;gap:20px;align-items:center}
+.tank{position:relative;flex:0 0 120px;height:220px;border-radius:26px;overflow:hidden;
+background:linear-gradient(180deg,rgba(255,255,255,.03),rgba(255,255,255,.01));
+border:1px solid rgba(255,255,255,.12);box-shadow:inset 0 0 24px rgba(0,0,0,.45)}
+.water{position:absolute;left:0;right:0;bottom:0;height:0;background:linear-gradient(var(--a1),var(--a2));
+transition:height 1.4s cubic-bezier(.22,1,.36,1)}
+.water::before{content:"";position:absolute;left:-50%;top:-9px;width:200%;height:18px;border-radius:45%;
+background:var(--a1);opacity:.55;animation:wave 6s linear infinite}
+@keyframes wave{to{transform:translateX(25%)}}
+.ticks{position:absolute;inset:0;pointer-events:none;
+background:repeating-linear-gradient(to top,transparent 0 21px,rgba(255,255,255,.07) 21px 22px)}
+.read{flex:1;min-width:0}
+.pct{font-size:4rem;font-weight:750;line-height:1;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+.pct small{font-size:1.6rem;font-weight:600;color:var(--mute);margin-left:2px}
+.state{margin-top:12px}
+.bar{height:6px;border-radius:6px;background:var(--line);margin-top:18px;overflow:hidden}
+.bar div{height:100%;width:0;background:linear-gradient(90deg,var(--a2),var(--a1));transition:width 1.4s cubic-bezier(.22,1,.36,1)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.stat{background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:16px;padding:12px 14px}
+.stat span{display:block;font-size:.68rem;color:var(--mute);text-transform:uppercase;letter-spacing:.08em}
+.stat b{display:block;margin-top:5px;font-size:.98rem;font-weight:600;font-variant-numeric:tabular-nums;
+white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+details summary{cursor:pointer;font-weight:600;list-style:none;display:flex;justify-content:space-between;align-items:center}
+details summary::-webkit-details-marker{display:none}
+details summary::after{content:"";width:8px;height:8px;border-right:2px solid var(--mute);border-bottom:2px solid var(--mute);
+transform:rotate(45deg);transition:transform .25s;margin-right:4px}
+details[open] summary::after{transform:rotate(225deg)}
+label{display:block;font-size:.75rem;color:var(--mute);margin:16px 0 6px}
+input{width:100%;padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.25);
+color:var(--fg);font-size:1rem;outline:none;transition:border-color .2s,box-shadow .2s}
+input:focus{border-color:var(--acc);box-shadow:0 0 0 3px rgba(56,189,248,.18)}
+button{width:100%;margin-top:18px;padding:13px;border:0;border-radius:12px;font-size:.95rem;font-weight:600;cursor:pointer;
+background:linear-gradient(135deg,#38bdf8,#0284c7);color:#fff;transition:filter .2s,transform .1s}
+button:hover{filter:brightness(1.1)}button:active{transform:scale(.98)}
+button.ghost{background:transparent;border:1px solid var(--line);color:var(--mute);margin-top:10px}
+button.ghost:hover{color:var(--bad);border-color:rgba(248,113,113,.4)}
+.hint{font-size:.72rem;color:var(--mute);margin-top:10px;line-height:1.45}#msg{min-height:1em}
+footer{text-align:center;color:var(--mute);font-size:.7rem;margin-top:18px;opacity:.7}
 </style></head><body><main>
-<header><h1 id="name">Water Tank</h1><span class="mute" id="age"></span></header>
-<div class="card"><div class="tank"><div class="water" id="water"></div>
-<div class="pct"><b id="pct">--</b><span id="state">LOADING</span></div></div></div>
-<div class="card">
-<div class="row"><span>Distance</span><span id="dist">--</span></div>
-<div class="row"><span>Measured range</span><span id="range">--</span></div>
-<div class="row"><span>Wi-Fi</span><span id="rssi">--</span></div>
-<div class="row"><span>Server</span><span id="mqtt">--</span></div>
-<div class="row"><span>Uptime</span><span id="up">--</span></div>
-<div class="row"><span>Firmware</span><span id="fw">--</span></div></div>
+<header><div><h1 id="name">Water Tank</h1><div class="sub" id="age">connecting…</div></div>
+<span class="pill" id="pill"><i></i><span id="state">LOADING</span></span></header>
+<div class="card"><div class="hero">
+<div class="tank"><div class="water" id="water"></div><div class="ticks"></div></div>
+<div class="read"><div class="pct"><span id="pct">--</span><small>%</small></div>
+<div class="sub state" id="dist">--</div>
+<div class="bar"><div id="barf"></div></div></div></div></div>
+<div class="card grid">
+<div class="stat"><span>Range</span><b id="range">--</b></div>
+<div class="stat"><span>Wi-Fi</span><b id="rssi">--</b></div>
+<div class="stat"><span>Server</span><b id="mqtt">--</b></div>
+<div class="stat"><span>Uptime</span><b id="up">--</b></div></div>
 <div class="card"><details><summary>Settings</summary>
 <form id="cfg">
 <label for="n">Device name</label><input id="n" name="name" maxlength="32">
@@ -84,20 +121,26 @@ button.ghost{background:transparent;border:1px solid var(--line);color:var(--mut
 <label for="u">Upper gap: sensor to 100% line (cm)</label><input id="u" name="upperGap" type="number" min="0" max="1000" required>
 <label for="l">Lower gap: bottom to 0% line (cm)</label><input id="l" name="lowerGap" type="number" min="0" max="1000" required>
 <p class="hint">0&ndash;100% is measured between the two gaps. Upper gap + lower gap must be smaller than the depth.</p>
-<button type="submit">Save</button><p class="hint" id="msg"></p></form>
+<button type="submit">Save settings</button><p class="hint" id="msg"></p></form>
 <button class="ghost" id="rst">Restart device</button></details></div>
+<footer>Firmware <span id="fw">--</span></footer>
 </main><script>
 const $=i=>document.getElementById(i);let last=0;
+const C={ok:['#7dd3fc','#0284c7','var(--ok)'],low:['#fde68a','#d97706','var(--warn)'],bad:['#fca5a5','#dc2626','var(--bad)'],off:['#64748b','#334155','var(--mute)']};
 function up(s){const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return d?d+'d '+h+'h':h?h+'h '+m+'m':m+'m'}
-function color(p){return p>=60?'linear-gradient(#38bdf8,#0369a1)':p>=25?'linear-gradient(#fbbf24,#b45309)':'linear-gradient(#f87171,#b91c1c)'}
+function theme(k){const c=C[k],r=document.documentElement.style;r.setProperty('--a1',c[0]);r.setProperty('--a2',c[1]);$('pill').style.color=c[2]}
 async function poll(){try{const s=await(await fetch('/api/status')).json();last=Date.now();
-const p=s.valid?Math.round(s.level):null;$('pct').textContent=p===null?'--':p+'%';
-$('water').style.height=(p||0)+'%';$('water').style.background=color(p||0);
+const p=s.valid?Math.max(0,Math.min(100,Math.round(s.level))):null;$('pct').textContent=p===null?'--':p;
+$('water').style.height=(p||0)+'%';$('barf').style.width=(p||0)+'%';
+theme(p===null?'off':p>=60?'ok':p>=25?'low':'bad');
 $('state').textContent=!s.valid?'NO READING':s.filling?'FILLING':p>=60?'GOOD':p>=25?'LOW':'CRITICAL';
-$('dist').textContent=s.distance>0?s.distance.toFixed(1)+' cm':'--';
-$('range').textContent=s.fullAt+' – '+s.emptyAt+' cm';$('rssi').textContent=s.rssi+' dBm';
-$('mqtt').textContent=s.mqtt?'connected':'offline';$('up').textContent=up(s.uptime);$('fw').textContent=s.fw;
-$('name').textContent=s.name;document.title=(p===null?'--':p+'%')+' · '+s.name}catch(e){$('state').textContent='OFFLINE'}}
+$('dist').textContent=s.distance>0?s.distance.toFixed(1)+' cm to surface':'no distance reading';
+$('range').textContent=s.fullAt+'–'+s.emptyAt+' cm';
+$('rssi').textContent=s.rssi+' dBm'+(s.rssi>-60?' · strong':s.rssi>-75?' · ok':' · weak');
+$('mqtt').textContent=s.mqtt?'Connected':'Offline';$('mqtt').style.color=s.mqtt?'var(--ok)':'var(--mute)';
+$('up').textContent=up(s.uptime);$('fw').textContent=s.fw;
+$('name').textContent=s.name;document.title=(p===null?'--':p+'%')+' · '+s.name}
+catch(e){$('state').textContent='OFFLINE';theme('off')}}
 async function loadCfg(){const c=await(await fetch('/api/config')).json();$('n').value=c.name;$('d').value=c.tankDepth;$('u').value=c.upperGap;$('l').value=c.lowerGap}
 $('cfg').onsubmit=async e=>{e.preventDefault();const r=await fetch('/api/config',{method:'POST',body:new URLSearchParams(new FormData(e.target))});
 $('msg').textContent=r.ok?'Saved.':'Error: '+await r.text();if(r.ok)poll()};
